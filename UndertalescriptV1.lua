@@ -49,22 +49,83 @@ Gui.IgnoreGuiInset = true
 Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 Gui.Parent         = LocalPlayer:WaitForChild("PlayerGui")
 
--- ── ICÔNE ─────────────────────────────────────────────────────────────────────
+-- ── ICÔNE MISTER — pur Lua, zéro rbxassetid ───────────────────────────────────
 local Icon = Instance.new("TextButton")
 Icon.Size             = UDim2.new(0, 54, 0, 54)
 Icon.Position         = UDim2.new(0, 14, 0, 14)
-Icon.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-Icon.Text             = "⚔️"
-Icon.TextSize         = 26
-Icon.Font             = Enum.Font.GothamBold
-Icon.TextColor3       = Color3.fromRGB(255, 255, 255)
+Icon.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+Icon.Text             = ""
 Icon.BorderSizePixel  = 0
 Icon.Visible          = false
 Icon.ZIndex           = 20
 Icon.Parent           = Gui
 Instance.new("UICorner", Icon).CornerRadius = UDim.new(1, 0)
 local IS = Instance.new("UIStroke", Icon)
-IS.Color = Color3.fromRGB(34, 197, 94); IS.Thickness = 2
+IS.Color = Color3.fromRGB(210, 30, 30); IS.Thickness = 2.5
+
+-- Halo rouge intérieur
+local Halo = Instance.new("Frame")
+Halo.Size                = UDim2.new(0, 40, 0, 40)
+Halo.Position            = UDim2.new(0.5, -20, 0.5, -20)
+Halo.BackgroundColor3    = Color3.fromRGB(150, 8, 8)
+Halo.BackgroundTransparency = 0.5
+Halo.BorderSizePixel     = 0
+Halo.ZIndex              = 20
+Halo.Parent              = Icon
+Instance.new("UICorner", Halo).CornerRadius = UDim.new(1, 0)
+
+-- Branches étoile flash
+local function makeBranch(rot)
+    local b = Instance.new("Frame")
+    b.Size                = UDim2.new(0, 28, 0, 3)
+    b.Position            = UDim2.new(0.5, -14, 0.5, -1.5)
+    b.BackgroundColor3    = Color3.fromRGB(255, 255, 255)
+    b.BackgroundTransparency = 0.25
+    b.BorderSizePixel     = 0
+    b.Rotation            = rot
+    b.ZIndex              = 21
+    b.Parent              = Icon
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 2)
+end
+makeBranch(45)
+makeBranch(-45)
+
+-- Centre brillant
+local Center = Instance.new("Frame")
+Center.Size               = UDim2.new(0, 9, 0, 9)
+Center.Position           = UDim2.new(0.5, -4.5, 0.5, -4.5)
+Center.BackgroundColor3   = Color3.fromRGB(255, 255, 255)
+Center.BackgroundTransparency = 0.05
+Center.BorderSizePixel    = 0
+Center.ZIndex             = 22
+Center.Parent             = Icon
+Instance.new("UICorner", Center).CornerRadius = UDim.new(1, 0)
+
+-- Shadow rouge "M"
+local Shadow = Instance.new("TextLabel")
+Shadow.Size               = UDim2.new(1, 0, 1, 2)
+Shadow.BackgroundTransparency = 1
+Shadow.Text               = "M"
+Shadow.TextColor3         = Color3.fromRGB(180, 10, 10)
+Shadow.TextSize           = 23
+Shadow.Font               = Enum.Font.GothamBlack
+Shadow.TextXAlignment     = Enum.TextXAlignment.Center
+Shadow.TextYAlignment     = Enum.TextYAlignment.Center
+Shadow.ZIndex             = 22
+Shadow.Parent             = Icon
+
+-- "M" blanc principal
+local MText = Instance.new("TextLabel")
+MText.Size                = UDim2.new(1, 0, 1, 0)
+MText.BackgroundTransparency = 1
+MText.Text                = "M"
+MText.TextColor3          = Color3.fromRGB(255, 255, 255)
+MText.TextSize            = 23
+MText.Font                = Enum.Font.GothamBlack
+MText.TextXAlignment      = Enum.TextXAlignment.Center
+MText.TextYAlignment      = Enum.TextYAlignment.Center
+MText.ZIndex              = 23
+MText.Parent              = Icon
 
 -- ── MAIN ──────────────────────────────────────────────────────────────────────
 local Main = Instance.new("Frame")
@@ -278,7 +339,6 @@ GPLabel.Font                = Enum.Font.GothamBold
 GPLabel.TextXAlignment      = Enum.TextXAlignment.Left
 GPLabel.Parent              = Right
 
--- Scroll pour la liste
 local Scroll = Instance.new("ScrollingFrame")
 Scroll.Size                = UDim2.new(1, 0, 1, -60)
 Scroll.BackgroundColor3    = Color3.fromRGB(18, 18, 18)
@@ -301,20 +361,14 @@ ScrollPad.PaddingRight  = UDim.new(0, 4)
 ScrollPad.PaddingBottom = UDim.new(0, 4)
 ScrollPad.Parent        = Scroll
 
--- Scan GP + bouton refresh
 local function ScanGPChars()
-    -- Vide la liste
     for _, c in ipairs(Scroll:GetChildren()) do
         if c:IsA("TextButton") then c:Destroy() end
     end
-
     local found = {}
-
-    -- Scan dans tout le workspace
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") then
             local n = obj.Name:lower()
-            -- Détecte les modèles de perso GP (boss, morph, NPC)
             if n:find("sans") or n:find("bendy") or n:find("last") or n:find("breath")
             or n:find("phase") or n:find("morph") or n:find("boss") or n:find("npc")
             or n:find("mini") then
@@ -326,7 +380,6 @@ local function ScanGPChars()
             end
         end
     end
-
     if #found == 0 then
         local Empty = Instance.new("TextLabel")
         Empty.Size = UDim2.new(1, -8, 0, 30)
@@ -337,7 +390,6 @@ local function ScanGPChars()
         Empty.Parent = Scroll
         return
     end
-
     for _, entry in ipairs(found) do
         local Btn = Instance.new("TextButton")
         Btn.Size             = UDim2.new(1, -8, 0, 38)
@@ -350,17 +402,11 @@ local function ScanGPChars()
         Btn.AutoButtonColor  = false
         Btn.Parent           = Scroll
         Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
-
-        -- Nom tronqué proprement
         local displayName = entry.name
         if #displayName > 22 then displayName = displayName:sub(1,22).."…" end
         Btn.Text = "  🎭 "..displayName
-
-        -- Stroke discret
         local BtnS = Instance.new("UIStroke", Btn)
         BtnS.Color = Color3.fromRGB(59, 130, 246); BtnS.Thickness = 1
-
-        -- Hover
         Btn.MouseEnter:Connect(function()
             TweenService:Create(Btn, TweenInfo.new(0.1), {
                 BackgroundColor3 = Color3.fromRGB(35, 35, 60)
@@ -371,18 +417,11 @@ local function ScanGPChars()
                 BackgroundColor3 = Color3.fromRGB(25, 25, 35)
             }):Play()
         end)
-
-        -- CLIC — Téléport + tentative de morph
         local model  = entry.model
         local target = entry.part
-
         Btn.MouseButton1Click:Connect(function()
-            -- Téléport sur le perso
-            local orig = HRP.CFrame
             HRP.CFrame = CFrame.new(target.Position + Vector3.new(0, 4, 0))
             task.wait(0.3)
-
-            -- Tente de fire tous les RemoteEvents du modèle (ToolGiver, morph, etc.)
             local fired = 0
             for _, d in ipairs(model:GetDescendants()) do
                 if d:IsA("RemoteEvent") then
@@ -390,14 +429,10 @@ local function ScanGPChars()
                     fired = fired + 1
                 end
             end
-
-            -- Cherche aussi TeleFunction sur le modèle
             local tele = model:FindFirstChild("TeleFunction", true)
             if tele and tele:IsA("RemoteFunction") then
                 pcall(function() tele:InvokeServer() end)
             end
-
-            -- Cherche le GP Door associé et passe dedans
             for _, obj in ipairs(workspace:GetDescendants()) do
                 local n = obj.Name:lower()
                 if n:find("gp door") or n:find("gpdoor") then
@@ -408,21 +443,16 @@ local function ScanGPChars()
                     end
                 end
             end
-
             Notif("🎭 Téléporté sur : "..entry.name
                 ..(fired > 0 and " | "..fired.." remotes fired" or ""))
-
-            -- Highlight bouton sélectionné
             TweenService:Create(BtnS, TweenInfo.new(0.15), {
                 Color = Color3.fromRGB(34, 197, 94)
             }):Play()
         end)
     end
-
     Notif("🔍 "..#found.." perso(s) GP trouvé(s)")
 end
 
--- Bouton refresh en bas
 ActBtn(Right, "🔍", "Scanner les persos", Color3.fromRGB(30, 80, 180), function()
     ScanGPChars()
 end)
@@ -474,64 +504,54 @@ task.spawn(function() -- HP Monitor
         if S.HPMonitor then
             local found = false
             for _, obj in ipairs(workspace:GetDescendants()) do
-local hum = obj:FindFirstChildOfClass("Humanoid")
-                if hum and (obj.Name:find("UltimateSans") or obj.Name:find("Last.Breath")) then
-                    HPLbl.Text = "❤️  Boss HP : "..math.floor(hum.Health).." / "..math.floor(hum.MaxHealth)
-                    found = true; break
+                if obj:IsA("Humanoid") and obj.Parent ~= Character then
+                    local n = obj.Parent.Name:lower()
+                    if n:find("sans") or n:find("boss") or n:find("phase")
+                    or n:find("bendy") or n:find("last") then
+                        HPLbl.Text = "❤️  Boss HP : "
+                            ..math.floor(obj.Health).."/"..math.floor(obj.MaxHealth)
+                        found = true; break
+                    end
                 end
             end
-            if not found then HPLbl.Text = "❤️  Boss HP : introuvable" end
-        else HPLbl.Text = "❤️  Boss HP : —" end
+            if not found then HPLbl.Text = "❤️  Boss HP : —" end
+        else
+            HPLbl.Text = "❤️  Boss HP : —"
+        end
     end
 end)
 
 task.spawn(function() -- Auto Money
     while true do task.wait(S.Delay)
-        if not S.AutoMoney then continue end
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj.Name == "Money" then
-                local p = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
-                if p then Glide(p.Position + Vector3.new(0,3,0)); task.wait(0.2) end
-            end
+        if S.AutoMoney then
+            Fire("CollectMoney")
+            Fire("GiveMoney")
+            Fire("AddMoney")
         end
     end
 end)
 
 task.spawn(function() -- Tool Grabber
-    while true do task.wait(S.Delay * 5)
-        if not S.ToolGrabber then continue end
-        local sans = workspace:FindFirstChild("UltimateSans9", true)
-        if sans then
-            local head = sans:FindFirstChild("Head") or sans:FindFirstChildOfClass("BasePart")
-            if head and head:IsA("BasePart") then
-                local orig = HRP.CFrame
-                HRP.CFrame = CFrame.new(head.Position + Vector3.new(0,3,0))
-                task.wait(0.5)
-                for _, d in ipairs(sans:GetDescendants()) do
-                    if d:IsA("RemoteEvent") then pcall(function() d:FireServer() end) end
+    while true do task.wait(S.Delay)
+        if S.ToolGrabber then
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("Tool") then
+                    pcall(function() obj.Parent = LocalPlayer.Backpack end)
                 end
-                task.wait(0.3); HRP.CFrame = orig
             end
         end
     end
 end)
 
 task.spawn(function() -- Anti Black Hole
-    while true do task.wait(0.25)
-        if S.AntiHole then
-            local hole = workspace:FindFirstChild("White Black Hole", true)
-            if hole then
-                local p = hole:IsA("BasePart") and hole or hole:FindFirstChildOfClass("BasePart")
-                if p and (HRP.Position - p.Position).Magnitude < 40 then
-                    HRP.CFrame = CFrame.new(safePos)
-                    Notif("⚠️ Black Hole évité !")
-                end
+    while true do task.wait(0.1)
+        if S.AntiHole and HRP then
+            if HRP.Position.Y < -50 then
+                HRP.CFrame = CFrame.new(safePos)
+                Notif("🕳️ Anti Black Hole activé !")
+            else
+                safePos = HRP.Position
             end
-        else safePos = HRP.Position end
+        end
     end
 end)
-
-task.wait(2)
-ScanGPChars()
-
-Notif("✅ Dashboard v3 — Bonne game boss man")
