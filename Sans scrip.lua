@@ -278,7 +278,6 @@ GPLabel.Font                = Enum.Font.GothamBold
 GPLabel.TextXAlignment      = Enum.TextXAlignment.Left
 GPLabel.Parent              = Right
 
--- Scroll pour la liste
 local Scroll = Instance.new("ScrollingFrame")
 Scroll.Size                = UDim2.new(1, 0, 1, -60)
 Scroll.BackgroundColor3    = Color3.fromRGB(18, 18, 18)
@@ -301,20 +300,14 @@ ScrollPad.PaddingRight  = UDim.new(0, 4)
 ScrollPad.PaddingBottom = UDim.new(0, 4)
 ScrollPad.Parent        = Scroll
 
--- Scan GP + bouton refresh
 local function ScanGPChars()
-    -- Vide la liste
     for _, c in ipairs(Scroll:GetChildren()) do
         if c:IsA("TextButton") then c:Destroy() end
     end
-
     local found = {}
-
-    -- Scan dans tout le workspace
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") then
             local n = obj.Name:lower()
-            -- Détecte les modèles de perso GP (boss, morph, NPC)
             if n:find("sans") or n:find("bendy") or n:find("last") or n:find("breath")
             or n:find("phase") or n:find("morph") or n:find("boss") or n:find("npc")
             or n:find("mini") then
@@ -326,7 +319,6 @@ local function ScanGPChars()
             end
         end
     end
-
     if #found == 0 then
         local Empty = Instance.new("TextLabel")
         Empty.Size = UDim2.new(1, -8, 0, 30)
@@ -337,7 +329,6 @@ local function ScanGPChars()
         Empty.Parent = Scroll
         return
     end
-
     for _, entry in ipairs(found) do
         local Btn = Instance.new("TextButton")
         Btn.Size             = UDim2.new(1, -8, 0, 38)
@@ -350,17 +341,11 @@ local function ScanGPChars()
         Btn.AutoButtonColor  = false
         Btn.Parent           = Scroll
         Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
-
-        -- Nom tronqué proprement
         local displayName = entry.name
         if #displayName > 22 then displayName = displayName:sub(1,22).."…" end
         Btn.Text = "  🎭 "..displayName
-
-        -- Stroke discret
         local BtnS = Instance.new("UIStroke", Btn)
         BtnS.Color = Color3.fromRGB(59, 130, 246); BtnS.Thickness = 1
-
-        -- Hover
         Btn.MouseEnter:Connect(function()
             TweenService:Create(Btn, TweenInfo.new(0.1), {
                 BackgroundColor3 = Color3.fromRGB(35, 35, 60)
@@ -371,18 +356,11 @@ local function ScanGPChars()
                 BackgroundColor3 = Color3.fromRGB(25, 25, 35)
             }):Play()
         end)
-
-        -- CLIC — Téléport + tentative de morph
         local model  = entry.model
         local target = entry.part
-
         Btn.MouseButton1Click:Connect(function()
-            -- Téléport sur le perso
-            local orig = HRP.CFrame
             HRP.CFrame = CFrame.new(target.Position + Vector3.new(0, 4, 0))
             task.wait(0.3)
-
-            -- Tente de fire tous les RemoteEvents du modèle (ToolGiver, morph, etc.)
             local fired = 0
             for _, d in ipairs(model:GetDescendants()) do
                 if d:IsA("RemoteEvent") then
@@ -390,14 +368,10 @@ local function ScanGPChars()
                     fired = fired + 1
                 end
             end
-
-            -- Cherche aussi TeleFunction sur le modèle
             local tele = model:FindFirstChild("TeleFunction", true)
             if tele and tele:IsA("RemoteFunction") then
                 pcall(function() tele:InvokeServer() end)
             end
-
-            -- Cherche le GP Door associé et passe dedans
             for _, obj in ipairs(workspace:GetDescendants()) do
                 local n = obj.Name:lower()
                 if n:find("gp door") or n:find("gpdoor") then
@@ -408,21 +382,16 @@ local function ScanGPChars()
                     end
                 end
             end
-
             Notif("🎭 Téléporté sur : "..entry.name
                 ..(fired > 0 and " | "..fired.." remotes fired" or ""))
-
-            -- Highlight bouton sélectionné
             TweenService:Create(BtnS, TweenInfo.new(0.15), {
                 Color = Color3.fromRGB(34, 197, 94)
             }):Play()
         end)
     end
-
     Notif("🔍 "..#found.." perso(s) GP trouvé(s)")
 end
 
--- Bouton refresh en bas
 ActBtn(Right, "🔍", "Scanner les persos", Color3.fromRGB(30, 80, 180), function()
     ScanGPChars()
 end)
@@ -453,16 +422,17 @@ do
         if delta.Magnitude > THRESHOLD then moved = true end
         local vp = workspace.CurrentCamera.ViewportSize
         Icon.Position = UDim2.new(0,
-            math.clamp(posStart.X.Offset+delta.X, 0, vp.X-54), 0,
-            math.clamp(posStart.Y.Offset+delta.Y, 0, vp.Y-54))
+            math.clamp(posStart.X.Offset + delta.X, 0, vp.X - 54), 0,
+            math.clamp(posStart.Y.Offset + delta.Y, 0, vp.Y - 54))
     end)
     UIS.InputEnded:Connect(function(inp)
         if inp.UserInputType ~= Enum.UserInputType.MouseButton1
         and inp.UserInputType ~= Enum.UserInputType.Touch then return end
         if dragging and not moved then
             Icon.Visible = false; Main.Visible = true
-            Main.Size = UDim2.new(0,520,0,0)
-            TweenService:Create(Main, TweenInfo.new(0.2), {Size=UDim2.new(0,520,0,268)}):Play()
+            Main.Size = UDim2.new(0, 520, 0, 0)
+            TweenService:Create(Main, TweenInfo.new(0.2),
+                {Size = UDim2.new(0, 520, 0, 268)}):Play()
         end
         dragging = false
     end)
@@ -474,4 +444,17 @@ task.spawn(function() -- HP Monitor
         if S.HPMonitor then
             local found = false
             for _, obj in ipairs(workspace:GetDescendants()) do
-        
+                if obj:IsA("Humanoid") then
+                    local n = (obj.Parent and obj.Parent.Name or ""):lower()
+                    if n:find("sans") or n:find("boss") or n:find("bendy")
+                    or n:find("phase") or n:find("morph") then
+                        HPLbl.Text = "❤️  Boss HP : "
+                            ..math.floor(obj.Health).." / "..math.floor(obj.MaxHealth)
+                        found = true; break
+                    end
+                end
+            end
+            if not found then HPLbl.Text = "❤️  Boss HP : —" end
+        else
+            HPLbl.Text = "❤️  Boss HP : —"
+       
