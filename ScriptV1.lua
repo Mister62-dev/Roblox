@@ -50,21 +50,20 @@ Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 Gui.Parent         = LocalPlayer:WaitForChild("PlayerGui")
 
 -- ── ICÔNE ─────────────────────────────────────────────────────────────────────
-local Icon = Instance.new("TextButton")
-Icon.Size             = UDim2.new(0, 54, 0, 54)
+local Icon = Instance.new("ImageButton")
+Icon.Size             = UDim2.new(0, 60, 0, 60)
 Icon.Position         = UDim2.new(0, 14, 0, 14)
-Icon.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-Icon.Text             = "⚔️"
-Icon.TextSize         = 26
-Icon.Font             = Enum.Font.GothamBold
-Icon.TextColor3       = Color3.fromRGB(255, 255, 255)
+Icon.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Icon.Image            = "rbxassetid://TON_ID_ICI"
+Icon.ScaleType        = Enum.ScaleType.Fit
 Icon.BorderSizePixel  = 0
 Icon.Visible          = false
 Icon.ZIndex           = 20
 Icon.Parent           = Gui
 Instance.new("UICorner", Icon).CornerRadius = UDim.new(1, 0)
 local IS = Instance.new("UIStroke", Icon)
-IS.Color = Color3.fromRGB(34, 197, 94); IS.Thickness = 2
+IS.Color     = Color3.fromRGB(220, 30, 30)
+IS.Thickness = 2.5
 
 -- ── MAIN ──────────────────────────────────────────────────────────────────────
 local Main = Instance.new("Frame")
