@@ -474,4 +474,64 @@ task.spawn(function() -- HP Monitor
         if S.HPMonitor then
             local found = false
             for _, obj in ipairs(workspace:GetDescendants()) do
-        
+local hum = obj:FindFirstChildOfClass("Humanoid")
+                if hum and (obj.Name:find("UltimateSans") or obj.Name:find("Last.Breath")) then
+                    HPLbl.Text = "❤️  Boss HP : "..math.floor(hum.Health).." / "..math.floor(hum.MaxHealth)
+                    found = true; break
+                end
+            end
+            if not found then HPLbl.Text = "❤️  Boss HP : introuvable" end
+        else HPLbl.Text = "❤️  Boss HP : —" end
+    end
+end)
+
+task.spawn(function() -- Auto Money
+    while true do task.wait(S.Delay)
+        if not S.AutoMoney then continue end
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj.Name == "Money" then
+                local p = obj:IsA("BasePart") and obj or obj:FindFirstChildOfClass("BasePart")
+                if p then Glide(p.Position + Vector3.new(0,3,0)); task.wait(0.2) end
+            end
+        end
+    end
+end)
+
+task.spawn(function() -- Tool Grabber
+    while true do task.wait(S.Delay * 5)
+        if not S.ToolGrabber then continue end
+        local sans = workspace:FindFirstChild("UltimateSans9", true)
+        if sans then
+            local head = sans:FindFirstChild("Head") or sans:FindFirstChildOfClass("BasePart")
+            if head and head:IsA("BasePart") then
+                local orig = HRP.CFrame
+                HRP.CFrame = CFrame.new(head.Position + Vector3.new(0,3,0))
+                task.wait(0.5)
+                for _, d in ipairs(sans:GetDescendants()) do
+                    if d:IsA("RemoteEvent") then pcall(function() d:FireServer() end) end
+                end
+                task.wait(0.3); HRP.CFrame = orig
+            end
+        end
+    end
+end)
+
+task.spawn(function() -- Anti Black Hole
+    while true do task.wait(0.25)
+        if S.AntiHole then
+            local hole = workspace:FindFirstChild("White Black Hole", true)
+            if hole then
+                local p = hole:IsA("BasePart") and hole or hole:FindFirstChildOfClass("BasePart")
+                if p and (HRP.Position - p.Position).Magnitude < 40 then
+                    HRP.CFrame = CFrame.new(safePos)
+                    Notif("⚠️ Black Hole évité !")
+                end
+            end
+        else safePos = HRP.Position end
+    end
+end)
+
+task.wait(2)
+ScanGPChars()
+
+Notif("✅ Dashboard v3 — Bonne game boss man")
