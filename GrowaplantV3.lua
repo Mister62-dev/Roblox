@@ -569,10 +569,11 @@ local function menuPage(page, title)
     return add
 end
 
--- ===================== TAB 1: MAIN (tabs: Seed Pack | Eggs) =====================
-local buyPage = addTab("\u{1F331}", "Main")
+-- ===================== TAB 1: MAIN (menu -> Seed Pack / Eggs) =====================
+local buyPage = addTab("\u{1F3E0}", "Main")
 -- leave room at the bottom for the START bar
 local buyArea = new("Frame", {Size=UDim2.new(1,0,1,-56), BackgroundTransparency=1, ClipsDescendants=true}, buyPage)
+local addBuy = menuPage(buyArea, "Main")
 
 local rows = {}
 local function paint(name)
@@ -618,36 +619,9 @@ local function buildBuyList(sp, items)
     end
 end
 
--- two tabs on top of the Main page: Seed Pack | Eggs (the active tab decides what START buys)
-local buyTabBar = new("Frame", {Size=UDim2.new(1,-6,0,34), BackgroundTransparency=1}, buyArea)
-local buyViews, buyTabBtns = {}, {}
-local function refreshBuyTabs()
-    for key, b in pairs(buyTabBtns) do
-        local on = (buyMode == key)
-        b.BackgroundColor3 = on and ACC or PANEL2
-        b.TextColor3 = on and BG or WHITE
-        buyViews[key].Visible = on
-    end
-end
-local function addBuyTab(key, label, items, pos, size)
-    local btn = round(new("TextButton", {Position=pos, Size=size, BackgroundColor3=PANEL2, Text=label, TextColor3=WHITE,
-        Font=Enum.Font.GothamBold, TextSize=13, BorderSizePixel=0}, buyTabBar), 9)
-    local view = new("ScrollingFrame", {Position=UDim2.fromOffset(0,40), Size=UDim2.new(1,0,1,-40), BackgroundTransparency=1,
-        BorderSizePixel=0, ScrollBarThickness=3, ScrollBarImageColor3=ACC, AutomaticCanvasSize=Enum.AutomaticSize.Y,
-        CanvasSize=UDim2.new(), Visible=false}, buyArea)
-    tint(view, "ScrollBarImageColor3", "ACC")
-    new("UIListLayout", {Padding=UDim.new(0,5)}, view)
-    buyTabBtns[key], buyViews[key] = btn, view
-    buildBuyList(view, items)
-    btn.MouseButton1Click:Connect(function()
-        setMode(key, true)
-        refreshBuyTabs()
-    end)
-end
-addBuyTab("seed", "Seed Pack", SEEDS, UDim2.fromOffset(0,0), UDim2.new(0.5,-3,1,0))
-addBuyTab("egg", "Eggs", EGGS, UDim2.new(0.5,3,0,0), UDim2.new(0.5,-3,1,0))
-onTheme(refreshBuyTabs)
-refreshBuyTabs()
+-- Main works like Settings: tap a row to open its page, "<" goes back
+addBuy("Seed Pack", function(sp) buildBuyList(sp, SEEDS) end, function() setMode("seed", true) end)
+addBuy("Eggs", function(sp) buildBuyList(sp, EGGS) end, function() setMode("egg", true) end)
 
 onTheme(function()
     for _, s in ipairs(ALL) do
