@@ -523,8 +523,56 @@ local function refit()
     end
 end
 
--- ===================== TAB 1: AUTO BUY SEEDS =====================
-local buyPage = addTab("\u{1F331}", "Auto Buy")
+-- ===== menu page: list of rows with ">" -> sub pages, "<" goes back =====
+-- (moved above the Auto Buy tab so both Auto Buy and Settings can use it)
+-- add(name, build, onOpen): onOpen runs when the row is tapped
+local function menuPage(page, title)
+    local listView = new("Frame", {Size=UDim2.fromScale(1,1), BackgroundTransparency=1}, page)
+    new("TextLabel", {Size=UDim2.new(1,0,0,30), BackgroundTransparency=1, Text=title, TextColor3=WHITE,
+        Font=Enum.Font.GothamBold, TextSize=20, TextXAlignment=Enum.TextXAlignment.Left}, listView)
+    local lst = new("ScrollingFrame", {Position=UDim2.fromOffset(0,36), Size=UDim2.new(1,0,1,-36),
+        BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, ScrollBarImageColor3=ACC,
+        AutomaticCanvasSize=Enum.AutomaticSize.Y, CanvasSize=UDim2.new()}, listView)
+    tint(lst, "ScrollBarImageColor3", "ACC")
+    new("UIListLayout", {Padding=UDim.new(0,6)}, lst)
+    local views = {}
+    local function show(name)
+        listView.Visible = (name == nil)
+        for n, v in pairs(views) do v.Visible = (n == name) end
+    end
+    local function add(name, build, onOpen)
+        local view = new("Frame", {Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Visible=false}, page)
+        views[name] = view
+        local back = tint(round(new("TextButton", {Size=UDim2.fromOffset(34,30), BackgroundColor3=PANEL2, Text="\u{2039}",
+            TextColor3=WHITE, Font=Enum.Font.GothamBold, TextSize=22, BorderSizePixel=0}, view), 8), "BackgroundColor3", "PANEL2")
+        new("TextLabel", {Size=UDim2.new(1,-44,0,30), Position=UDim2.fromOffset(44,0), BackgroundTransparency=1, Text=name,
+            TextColor3=WHITE, Font=Enum.Font.GothamBold, TextSize=18, TextXAlignment=Enum.TextXAlignment.Left}, view)
+        local sp = new("ScrollingFrame", {Position=UDim2.fromOffset(0,38), Size=UDim2.new(1,0,1,-38),
+            BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, ScrollBarImageColor3=ACC,
+            AutomaticCanvasSize=Enum.AutomaticSize.Y, CanvasSize=UDim2.new()}, view)
+        tint(sp, "ScrollBarImageColor3", "ACC")
+        new("UIListLayout", {Padding=UDim.new(0,6)}, sp)
+        back.MouseButton1Click:Connect(function() show(nil) end)
+
+        local row = tint(round(new("TextButton", {Size=UDim2.new(1,-6,0,42), BackgroundColor3=PANEL, Text="",
+            AutoButtonColor=false, BorderSizePixel=0}, lst), 9), "BackgroundColor3", "PANEL")
+        new("TextLabel", {Size=UDim2.new(1,-50,1,0), Position=UDim2.fromOffset(14,0), BackgroundTransparency=1, Text=name,
+            TextColor3=WHITE, Font=Enum.Font.GothamMedium, TextSize=13, TextXAlignment=Enum.TextXAlignment.Left}, row)
+        new("TextLabel", {Size=UDim2.fromOffset(30,42), Position=UDim2.new(1,-38,0,0), BackgroundTransparency=1, Text="\u{203A}",
+            TextColor3=WHITE, Font=Enum.Font.GothamBold, TextSize=26}, row)
+        row.MouseButton1Click:Connect(function()
+            show(name)
+            if onOpen then onOpen() end
+        end)
+        build(sp)
+    end
+    return add
+end
+
+-- ===================== TAB 1: MAIN (tabs: Seed Pack | Eggs) =====================
+local buyPage = addTab("\u{1F331}", "Main")
+-- leave room at the bottom for the START bar
+local buyArea = new("Frame", {Size=UDim2.new(1,0,1,-56), BackgroundTransparency=1, ClipsDescendants=true}, buyPage)
 
 local rows = {}
 local function paint(name)
@@ -538,30 +586,27 @@ local function smallBtn(text, pos, size, color, parentObj)
     return round(new("TextButton", {Position=pos, Size=size, BackgroundColor3=color, Text=text, TextColor3=WHITE,
         Font=Enum.Font.GothamBold, TextSize=13, BorderSizePixel=0}, parentObj), 9)
 end
--- switch: Seed Packs / Eggs (decides what START buys and which list is shown)
-local segSeed = smallBtn("Seed Packs", UDim2.fromOffset(0,0), UDim2.new(0.5,-3,0,32), PANEL2, buyPage)
-local segEgg = smallBtn("Eggs", UDim2.new(0.5,3,0,0), UDim2.new(0.5,-3,0,32), PANEL2, buyPage)
-local selAll = smallBtn("Select All", UDim2.fromOffset(0,38), UDim2.new(0.5,-3,0,32), Color3.fromRGB(50,100,190), buyPage)
-local clr = smallBtn("Clear", UDim2.new(0.5,3,0,38), UDim2.new(0.5,-3,0,32), Color3.fromRGB(150,65,75), buyPage)
-local function curItems() return buyMode == "egg" and EGGS or SEEDS end
-selAll.MouseButton1Click:Connect(function() for _, s in ipairs(curItems()) do selected[s[1]] = true; paint(s[1]) end; saveSettings() end)
-clr.MouseButton1Click:Connect(function() for _, s in ipairs(curItems()) do selected[s[1]] = false; paint(s[1]) end; saveSettings() end)
 
-local function mkList()
-    local l = new("ScrollingFrame", {Position=UDim2.fromOffset(0,76), Size=UDim2.new(1,0,1,-132),
-        BackgroundTransparency=1, ScrollBarThickness=3, ScrollBarImageColor3=ACC, BorderSizePixel=0,
-        AutomaticCanvasSize=Enum.AutomaticSize.Y, CanvasSize=UDim2.new()}, buyPage)
-    tint(l, "ScrollBarImageColor3", "ACC")
-    new("UIListLayout", {Padding=UDim.new(0,5)}, l)
-    return l
+-- opening a sub page decides what START buys
+local function setMode(m, userPick)
+    buyMode = (m == "egg") and "egg" or "seed"
+    if userPick then
+        for k in pairs(cooldown) do cooldown[k] = nil end
+        saveSettings()
+    end
 end
-local seedList, eggList = mkList(), mkList()
 
-for _, group in ipairs({{SEEDS, seedList}, {EGGS, eggList}}) do
-    for _, s in ipairs(group[1]) do
+local function buildBuyList(sp, items)
+    local top = new("Frame", {Size=UDim2.new(1,-6,0,32), BackgroundTransparency=1}, sp)
+    local selAll = smallBtn("Select All", UDim2.fromOffset(0,0), UDim2.new(0.5,-3,1,0), Color3.fromRGB(50,100,190), top)
+    local clr = smallBtn("Clear", UDim2.new(0.5,3,0,0), UDim2.new(0.5,-3,1,0), Color3.fromRGB(150,65,75), top)
+    selAll.MouseButton1Click:Connect(function() for _, s in ipairs(items) do selected[s[1]] = true; paint(s[1]) end; saveSettings() end)
+    clr.MouseButton1Click:Connect(function() for _, s in ipairs(items) do selected[s[1]] = false; paint(s[1]) end; saveSettings() end)
+
+    for _, s in ipairs(items) do
         local name, color = s[1], s[3]
         local btn = round(new("TextButton", {Size=UDim2.new(1,-6,0,38), BackgroundColor3=PANEL, Text="",
-            AutoButtonColor=false, BorderSizePixel=0}, group[2]), 9)
+            AutoButtonColor=false, BorderSizePixel=0}, sp), 9)
         round(new("Frame", {Size=UDim2.new(0,5,1,-12), Position=UDim2.fromOffset(6,6), BackgroundColor3=color, BorderSizePixel=0}, btn), 3)
         new("TextLabel", {Size=UDim2.new(1,-62,1,0), Position=UDim2.fromOffset(18,0), BackgroundTransparency=1,
             Text=name, TextColor3=WHITE, Font=Enum.Font.GothamMedium, TextSize=13,
@@ -572,29 +617,44 @@ for _, group in ipairs({{SEEDS, seedList}, {EGGS, eggList}}) do
         btn.MouseButton1Click:Connect(function() selected[name] = not selected[name]; paint(name); saveSettings() end)
     end
 end
+
+-- two tabs on top of the Main page: Seed Pack | Eggs (the active tab decides what START buys)
+local buyTabBar = new("Frame", {Size=UDim2.new(1,-6,0,34), BackgroundTransparency=1}, buyArea)
+local buyViews, buyTabBtns = {}, {}
+local function refreshBuyTabs()
+    for key, b in pairs(buyTabBtns) do
+        local on = (buyMode == key)
+        b.BackgroundColor3 = on and ACC or PANEL2
+        b.TextColor3 = on and BG or WHITE
+        buyViews[key].Visible = on
+    end
+end
+local function addBuyTab(key, label, items, pos, size)
+    local btn = round(new("TextButton", {Position=pos, Size=size, BackgroundColor3=PANEL2, Text=label, TextColor3=WHITE,
+        Font=Enum.Font.GothamBold, TextSize=13, BorderSizePixel=0}, buyTabBar), 9)
+    local view = new("ScrollingFrame", {Position=UDim2.fromOffset(0,40), Size=UDim2.new(1,0,1,-40), BackgroundTransparency=1,
+        BorderSizePixel=0, ScrollBarThickness=3, ScrollBarImageColor3=ACC, AutomaticCanvasSize=Enum.AutomaticSize.Y,
+        CanvasSize=UDim2.new(), Visible=false}, buyArea)
+    tint(view, "ScrollBarImageColor3", "ACC")
+    new("UIListLayout", {Padding=UDim.new(0,5)}, view)
+    buyTabBtns[key], buyViews[key] = btn, view
+    buildBuyList(view, items)
+    btn.MouseButton1Click:Connect(function()
+        setMode(key, true)
+        refreshBuyTabs()
+    end)
+end
+addBuyTab("seed", "Seed Pack", SEEDS, UDim2.fromOffset(0,0), UDim2.new(0.5,-3,1,0))
+addBuyTab("egg", "Eggs", EGGS, UDim2.new(0.5,3,0,0), UDim2.new(0.5,-3,1,0))
+onTheme(refreshBuyTabs)
+refreshBuyTabs()
+
 onTheme(function()
     for _, s in ipairs(ALL) do
         rows[s[1]].btn.BackgroundTransparency = 1 - panelOp
         paint(s[1])
     end
 end)
-
-local function setMode(m, userPick)
-    buyMode = (m == "egg") and "egg" or "seed"
-    local egg = (buyMode == "egg")
-    seedList.Visible, eggList.Visible = not egg, egg
-    segSeed.BackgroundColor3 = egg and PANEL2 or ACC
-    segSeed.TextColor3 = egg and WHITE or BG
-    segEgg.BackgroundColor3 = egg and ACC or PANEL2
-    segEgg.TextColor3 = egg and BG or WHITE
-    if userPick then
-        for k in pairs(cooldown) do cooldown[k] = nil end
-        saveSettings()
-    end
-end
-onTheme(function() setMode(buyMode) end)
-segSeed.MouseButton1Click:Connect(function() setMode("seed", true) end)
-segEgg.MouseButton1Click:Connect(function() setMode("egg", true) end)
 setMode(buyMode)
 
 local bar = new("Frame", {Position=UDim2.new(0,0,1,-50), Size=UDim2.new(1,0,0,50), BackgroundTransparency=1}, buyPage)
@@ -799,45 +859,7 @@ end
 
 -- ===================== TAB 2: SETTINGS (menu list -> sub pages) =====================
 -- Speed Hub style: a list of rows with ">" ; tapping a row opens that sub page, "<" goes back
-local function menuPage(page, title)
-    local listView = new("Frame", {Size=UDim2.fromScale(1,1), BackgroundTransparency=1}, page)
-    new("TextLabel", {Size=UDim2.new(1,0,0,30), BackgroundTransparency=1, Text=title, TextColor3=WHITE,
-        Font=Enum.Font.GothamBold, TextSize=20, TextXAlignment=Enum.TextXAlignment.Left}, listView)
-    local lst = new("ScrollingFrame", {Position=UDim2.fromOffset(0,36), Size=UDim2.new(1,0,1,-36),
-        BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, ScrollBarImageColor3=ACC,
-        AutomaticCanvasSize=Enum.AutomaticSize.Y, CanvasSize=UDim2.new()}, listView)
-    tint(lst, "ScrollBarImageColor3", "ACC")
-    new("UIListLayout", {Padding=UDim.new(0,6)}, lst)
-    local views = {}
-    local function show(name)
-        listView.Visible = (name == nil)
-        for n, v in pairs(views) do v.Visible = (n == name) end
-    end
-    local function add(name, build)
-        local view = new("Frame", {Size=UDim2.fromScale(1,1), BackgroundTransparency=1, Visible=false}, page)
-        views[name] = view
-        local back = tint(round(new("TextButton", {Size=UDim2.fromOffset(34,30), BackgroundColor3=PANEL2, Text="\u{2039}",
-            TextColor3=WHITE, Font=Enum.Font.GothamBold, TextSize=22, BorderSizePixel=0}, view), 8), "BackgroundColor3", "PANEL2")
-        new("TextLabel", {Size=UDim2.new(1,-44,0,30), Position=UDim2.fromOffset(44,0), BackgroundTransparency=1, Text=name,
-            TextColor3=WHITE, Font=Enum.Font.GothamBold, TextSize=18, TextXAlignment=Enum.TextXAlignment.Left}, view)
-        local sp = new("ScrollingFrame", {Position=UDim2.fromOffset(0,38), Size=UDim2.new(1,0,1,-38),
-            BackgroundTransparency=1, BorderSizePixel=0, ScrollBarThickness=3, ScrollBarImageColor3=ACC,
-            AutomaticCanvasSize=Enum.AutomaticSize.Y, CanvasSize=UDim2.new()}, view)
-        tint(sp, "ScrollBarImageColor3", "ACC")
-        new("UIListLayout", {Padding=UDim.new(0,6)}, sp)
-        back.MouseButton1Click:Connect(function() show(nil) end)
-
-        local row = tint(round(new("TextButton", {Size=UDim2.new(1,-6,0,42), BackgroundColor3=PANEL, Text="",
-            AutoButtonColor=false, BorderSizePixel=0}, lst), 9), "BackgroundColor3", "PANEL")
-        new("TextLabel", {Size=UDim2.new(1,-50,1,0), Position=UDim2.fromOffset(14,0), BackgroundTransparency=1, Text=name,
-            TextColor3=WHITE, Font=Enum.Font.GothamMedium, TextSize=13, TextXAlignment=Enum.TextXAlignment.Left}, row)
-        new("TextLabel", {Size=UDim2.fromOffset(30,42), Position=UDim2.new(1,-38,0,0), BackgroundTransparency=1, Text="\u{203A}",
-            TextColor3=WHITE, Font=Enum.Font.GothamBold, TextSize=26}, row)
-        row.MouseButton1Click:Connect(function() show(name) end)
-        build(sp)
-    end
-    return add
-end
+-- (menuPage now lives above the Auto Buy tab)
 
 local function pct(v) return math.floor(v * 100 + 0.5) .. "%" end
 local ACC_PRESETS = {
@@ -993,7 +1015,7 @@ end)
 -- section(page, "Harvest")
 -- toggleRow(page, "Auto harvest", "Collect ripe plants", false, function(v) end)
 
-selectTab("Auto Buy")
+selectTab("Main")
 
 -- ===== minimize icon (Mister Hub style) =====
 local ICON = 64
