@@ -569,11 +569,11 @@ local function menuPage(page, title)
     return add
 end
 
--- ===================== TAB 1: MAIN (menu -> Seed Pack / Eggs) =====================
-local buyPage = addTab("\u{1F3E0}", "Main")
+-- ===================== TAB 1: AUTO BUY (menu -> Seed Pack / Eggs) =====================
+local buyPage = addTab("\u{1F331}", "Auto Buy")
 -- leave room at the bottom for the START bar
 local buyArea = new("Frame", {Size=UDim2.new(1,0,1,-56), BackgroundTransparency=1, ClipsDescendants=true}, buyPage)
-local addBuy = menuPage(buyArea, "Main")
+local addBuy = menuPage(buyArea, "Auto Buy")
 
 local rows = {}
 local function paint(name)
@@ -619,9 +619,8 @@ local function buildBuyList(sp, items)
     end
 end
 
--- Main works like Settings: tap a row to open its page, "<" goes back
-addBuy("Seed Pack", function(sp) buildBuyList(sp, SEEDS) end, function() setMode("seed", true) end)
-addBuy("Eggs", function(sp) buildBuyList(sp, EGGS) end, function() setMode("egg", true) end)
+addBuy("Auto-buy Seed Pack", function(sp) buildBuyList(sp, SEEDS) end, function() setMode("seed", true) end)
+addBuy("Auto-buy Eggs", function(sp) buildBuyList(sp, EGGS) end, function() setMode("egg", true) end)
 
 onTheme(function()
     for _, s in ipairs(ALL) do
@@ -633,7 +632,48 @@ setMode(buyMode)
 
 local bar = new("Frame", {Position=UDim2.new(0,0,1,-50), Size=UDim2.new(1,0,0,50), BackgroundTransparency=1}, buyPage)
 local toggle = smallBtn("\u{25B6}  START", UDim2.fromOffset(0,3), UDim2.new(0.5,-3,0,44), ACC, bar)
-toggle.TextSize = 16; toggle.TextColor3 = BG
+
+-- ===== START / STOP button style =====
+local STOP_C = Color3.fromRGB(225,65,80)
+toggle.Font = Enum.Font.GothamBlack
+toggle.TextSize = 16
+toggle.AutoButtonColor = false
+local tgCorner = toggle:FindFirstChildOfClass("UICorner")
+if tgCorner then tgCorner.CornerRadius = UDim.new(0, 12) end
+new("UIGradient", {Color = ColorSequence.new(Color3.new(1,1,1), Color3.fromRGB(170,170,170)), Rotation = 90}, toggle)
+local tgStroke = new("UIStroke", {Color = WHITE, Thickness = 1.5, Transparency = 0.55,
+    ApplyStrokeMode = Enum.ApplyStrokeMode.Border}, toggle) -- Border = outline of the button, not the text
+local tgScale = new("UIScale", {Scale = 1}, toggle)
+
+local function styleToggle()
+    local base = running and STOP_C or ACC
+    toggle.Text = running and "\u{25A0}  STOP" or "\u{25B6}  START"
+    toggle.TextColor3 = running and WHITE or BG
+    TS:Create(toggle, TweenInfo.new(0.2), {BackgroundColor3 = base}):Play()
+    tgStroke.Color = base:Lerp(WHITE, 0.45)
+end
+styleToggle()
+
+-- press feedback
+local function pressTo(s) TS:Create(tgScale, TweenInfo.new(0.08), {Scale = s}):Play() end
+toggle.MouseButton1Down:Connect(function() pressTo(0.95) end)
+toggle.MouseButton1Up:Connect(function() pressTo(1) end)
+toggle.MouseLeave:Connect(function() pressTo(1) end)
+
+-- soft border pulse while running
+task.spawn(function()
+    while gui.Parent do
+        if running then
+            TS:Create(tgStroke, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.1}):Play()
+            task.wait(0.7)
+            TS:Create(tgStroke, TweenInfo.new(0.7, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {Transparency = 0.7}):Play()
+            task.wait(0.7)
+        else
+            tgStroke.Transparency = 0.55
+            task.wait(0.3)
+        end
+    end
+end)
 local status = new("TextLabel", {Position=UDim2.new(0.5,6,0,3), Size=UDim2.new(0.5,-6,0,44), BackgroundTransparency=1,
     Text="Clicks: 0\nReady", TextColor3=MUTED, Font=Enum.Font.Gotham, TextSize=12, TextWrapped=true,
     TextXAlignment=Enum.TextXAlignment.Left}, bar)
@@ -989,7 +1029,7 @@ end)
 -- section(page, "Harvest")
 -- toggleRow(page, "Auto harvest", "Collect ripe plants", false, function(v) end)
 
-selectTab("Main")
+selectTab("Auto Buy")
 
 -- ===== minimize icon (Mister Hub style) =====
 local ICON = 64
@@ -1131,9 +1171,7 @@ drag(icon, icon, restore)
 
 local function setRunning(v)
     running = v
-    toggle.Text = v and "\u{25A0}  STOP" or "\u{25B6}  START"
-    TS:Create(toggle, TweenInfo.new(0.15), {BackgroundColor3 = v and Color3.fromRGB(215,70,80) or ACC}):Play()
-    toggle.TextColor3 = v and WHITE or BG
+    styleToggle()
     dot.BackgroundColor3 = v and ACC or Color3.fromRGB(150,65,75)
 end
 toggle.MouseButton1Click:Connect(function() setRunning(not running) end)
@@ -1141,8 +1179,7 @@ cam:GetPropertyChangedSignal("ViewportSize"):Connect(refit)
 
 -- keep START button + status dot in sync with the theme
 onTheme(function()
-    if not running then toggle.BackgroundColor3 = ACC end
-    toggle.TextColor3 = running and WHITE or BG
+    styleToggle()
     dot.BackgroundColor3 = running and ACC or Color3.fromRGB(150,65,75)
 end)
 
