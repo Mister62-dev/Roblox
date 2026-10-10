@@ -787,11 +787,15 @@ local function scanStaff()
 end
 Players.PlayerAdded:Connect(checkStaff)
 
--- ===== FPS boost (low textures, no shadows, no particles) =====
+-- ===== FPS boost (very few textures, no accessories, no shadows, no particles) =====
+-- everything is reversible: original values are saved and restored when you switch it off
 local Lighting = game:GetService("Lighting")
 local function weak() return setmetatable({}, {__mode = "k"}) end
-local fps = {saved = weak(), conns = {}, token = 0, glob = {}}
-local PARTICLES = {"ParticleEmitter", "Trail", "Beam", "Fire", "Smoke", "Sparkles"}
+local fps = {saved = weak(), removed = weak(), conns = {}, token = 0, glob = {}}
+local EFFECTS = {"ParticleEmitter", "Trail", "Beam", "Fire", "Smoke", "Sparkles", "Highlight",
+    "PointLight", "SpotLight", "SurfaceLight"}
+local SKY_FACES = {"SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp"}
+
 local function boost(o)
     if fps.saved[o] then return end
     local s, set
@@ -799,13 +803,33 @@ local function boost(o)
         if o:IsA("Terrain") then return end
         s = {Material = o.Material, Reflectance = o.Reflectance, CastShadow = o.CastShadow}
         set = {Material = Enum.Material.SmoothPlastic, Reflectance = 0, CastShadow = false}
-        if o:IsA("MeshPart") then s.TextureID = o.TextureID; set.TextureID = "" end
+        if o:IsA("MeshPart") then
+            s.TextureID = o.TextureID; set.TextureID = ""
+            s.RenderFidelity = o.RenderFidelity; set.RenderFidelity = Enum.RenderFidelity.Performance
+        end
+    elseif o:IsA("SurfaceAppearance") then
+        s = {ColorMap = o.ColorMap, MetalnessMap = o.MetalnessMap, NormalMap = o.NormalMap, RoughnessMap = o.RoughnessMap}
+        set = {ColorMap = "", MetalnessMap = "", NormalMap = "", RoughnessMap = ""}
     elseif o:IsA("Decal") or o:IsA("Texture") then
         s, set = {Transparency = o.Transparency}, {Transparency = 1}
+    elseif o:IsA("Shirt") then
+        s, set = {ShirtTemplate = o.ShirtTemplate}, {ShirtTemplate = ""}
+    elseif o:IsA("Pants") then
+        s, set = {PantsTemplate = o.PantsTemplate}, {PantsTemplate = ""}
+    elseif o:IsA("ShirtGraphic") then
+        s, set = {Graphic = o.Graphic}, {Graphic = ""}
+    elseif o:IsA("Sky") then
+        s = {StarCount = o.StarCount, CelestialBodiesShown = o.CelestialBodiesShown}
+        set = {StarCount = 0, CelestialBodiesShown = false}
+        for _, f in ipairs(SKY_FACES) do s[f] = o[f]; set[f] = "" end
+    elseif o:IsA("Atmosphere") then
+        s, set = {Density = o.Density, Haze = o.Haze, Glare = o.Glare}, {Density = 0, Haze = 0, Glare = 0}
+    elseif o:IsA("Clouds") then
+        s, set = {Enabled = o.Enabled}, {Enabled = false}
     elseif o:IsA("PostEffect") then
         s, set = {Enabled = o.Enabled}, {Enabled = false}
     else
-        for _, c in ipairs(PARTICLES) do
+        for _, c in ipairs(EFFECTS) do
             if o:IsA(c) then s, set = {Enabled = o.Enabled}, {Enabled = false} break end
         end
     end
@@ -813,13 +837,33 @@ local function boost(o)
     fps.saved[o] = s
     for k, v in pairs(set) do pcall(function() o[k] = v end) end
 end
+
+-- accessories (hats, hair, backpacks...) are taken off every character, yours and the others'
+local function stripAccessory(a)
+    if not a:IsA("Accessory") or fps.removed[a] then return end
+    fps.removed[a] = a.Parent
+    pcall(function() a.Parent = nil end)
+end
+local function hookChar(ch)
+    for _, c in ipairs(ch:GetChildren()) do stripAccessory(c) end
+    table.insert(fps.conns, ch.ChildAdded:Connect(stripAccessory))
+end
+local function hookPlayer(p)
+    if p.Character then hookChar(p.Character) end
+    table.insert(fps.conns, p.CharacterAdded:Connect(hookChar))
+end
+
 local function fpsEnable()
     fpsOn = true
     fps.token += 1
     local tok = fps.token
     fps.glob = {shadows = Lighting.GlobalShadows}
+    pcall(function() fps.glob.diffuse = Lighting.EnvironmentDiffuseScale end)
+    pcall(function() fps.glob.specular = Lighting.EnvironmentSpecularScale end)
     pcall(function() fps.glob.quality = settings().Rendering.QualityLevel end)
     pcall(function() Lighting.GlobalShadows = false end)
+    pcall(function() Lighting.EnvironmentDiffuseScale = 0 end)
+    pcall(function() Lighting.EnvironmentSpecularScale = 0 end)
     pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
     local t = workspace:FindFirstChildOfClass("Terrain")
     if t then
@@ -832,6 +876,9 @@ local function fpsEnable()
             end)
         end
     end
+    -- accessories first (cheap), then textures
+    for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
+    table.insert(fps.conns, Players.PlayerAdded:Connect(hookPlayer))
     for _, root in ipairs({workspace, Lighting}) do
         table.insert(fps.conns, root.DescendantAdded:Connect(boost))
     end
@@ -853,13 +900,19 @@ local function fpsDisable()
     fps.token += 1
     for _, c in ipairs(fps.conns) do c:Disconnect() end
     fps.conns = {}
-    local saved, glob = fps.saved, fps.glob
-    fps.saved, fps.glob = weak(), {}
+    local saved, removed, glob = fps.saved, fps.removed, fps.glob
+    fps.saved, fps.removed, fps.glob = weak(), weak(), {}
     if glob.shadows ~= nil then pcall(function() Lighting.GlobalShadows = glob.shadows end) end
+    if glob.diffuse then pcall(function() Lighting.EnvironmentDiffuseScale = glob.diffuse end) end
+    if glob.specular then pcall(function() Lighting.EnvironmentSpecularScale = glob.specular end) end
     if glob.quality then pcall(function() settings().Rendering.QualityLevel = glob.quality end) end
     local t = workspace:FindFirstChildOfClass("Terrain")
     if t and glob.terrain then
         for k, v in pairs(glob.terrain) do pcall(function() t[k] = v end) end
+    end
+    -- put the accessories back (only where the character still exists)
+    for a, par in pairs(removed) do
+        pcall(function() if par and par.Parent then a.Parent = par end end)
     end
     task.spawn(function()
         local n = 0
@@ -930,7 +983,7 @@ addSet("Utility", function(sp)
     toggleRow(sp, "Anti AFK", "Stops the game from kicking you for idling", antiAfk, function(v) antiAfk = v; saveSettings() end)
     toggleRow(sp, "Hop on admin/owner", "Switches server when an admin or the owner joins", hopOn,
         function(v) hopOn = v; saveSettings(); if v then scanStaff() end end)
-    toggleRow(sp, "FPS boost", "Low textures, no shadows, no particles, simple materials", fpsOn,
+    toggleRow(sp, "FPS boost", "Very few textures, no accessories, no shadows, no particles", fpsOn,
         function(v) if v then fpsEnable() else fpsDisable() end; saveSettings() end)
     buttonRow(sp, "\u{1F500} Hop server now", Color3.fromRGB(50,100,190), function() serverHop("manual") end)
 end)
