@@ -319,6 +319,119 @@ local function getShopCF()
     return autoShops[m]
 end
 
+-- ===== REMOTE BUY: buy from anywhere (added in opencode copy only, original untouched) =====
+-- Why blink instead of a pure "fake body": the server measures your REAL HumanoidRootPart,
+-- so a client-side fake part can never pass its distance check. We teleport the REAL HRP
+-- to the shop for ~0.4s per purchase (server sees you inside the shop), then return to base.
+-- A decoy part stays at your base so you look like you never moved.
+local RB = { enabled = true, before = 0.18, after = 0.22, verbose = false }
+local RB_blinking = false
+local function RB_ShopCF(kind)
+    if shopCFs[kind] then return shopCFs[kind] end
+    if autoShops[kind] then return autoShops[kind] end
+    local keep = buyMode
+    buyMode = kind
+    local cf = findShop()
+    buyMode = keep
+    autoShops[kind] = cf
+    return cf
+end
+local function RB_BlinkPress(fn, kind)
+    if not RB.enabled or RB_blinking then pcall(fn) return end
+    local h = getHRP()
+    local cf = RB_ShopCF(kind or buyMode) or getShopCF()
+    if not h or not cf then pcall(fn) return end
+    if (h.Position - cf.Position).Magnitude < 12 then pcall(fn) return end -- already at shop
+    RB_blinking = true
+    local origin, wasAnchored = h.CFrame, h.Anchored
+    local decoy
+    pcall(function()
+        decoy = Instance.new("Part")
+        decoy.Name = "RemoteBuyDecoy"
+        decoy.Size = Vector3.new(2, 5, 1)
+        decoy.CFrame = origin
+        decoy.Anchored, decoy.CanCollide, decoy.Transparency = true, false, 1
+        decoy.Parent = workspace
+    end)
+    local ok, err = pcall(function()
+        h.Anchored = true
+        h.CFrame = cf
+        h.AssemblyLinearVelocity = Vector3.zero
+        task.wait(RB.before) -- let position replicate before firing
+        h.Anchored = false
+        fn() -- << remote / button fires HERE while server thinks we are at the shop
+        task.wait(RB.after)
+        h.Anchored = true
+        h.CFrame = origin
+        task.wait()
+        h.Anchored = wasAnchored
+        h.AssemblyLinearVelocity = Vector3.zero
+    end)
+    pcall(function() if decoy then decoy:Destroy() end end)
+    if not ok then
+        log("RemoteBuy blink error: " .. tostring(err))
+        pcall(function() h.CFrame = origin h.Anchored = wasAnchored end)
+    end
+    RB_blinking = false
+end
+-- widen prompts once: manual + fireproximityprompt buys stop failing on distance
+pcall(function()
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("ProximityPrompt") then
+            d.RequiresLineOfSight = false
+            if d.MaxActivationDistance < 1000 then d.MaxActivationDistance = 1000 end
+            d.HoldDuration = 0
+        end
+    end
+end)
+-- auto-blink for ANY shop remote fired while far (covers direct remote buys too)
+pcall(function()
+    local function shopRemote(r)
+        local n = clean(r.Name .. " " .. r:GetFullName())
+        return n:find("buy", 1, true) or n:find("purchase", 1, true) or n:find("shop", 1, true)
+            or n:find("seed", 1, true) or n:find("egg", 1, true) or n:find("pack", 1, true)
+    end
+    if typeof(hookmetamethod) == "function" and typeof(newcclosure) == "function"
+        and typeof(checkcaller) == "function" and typeof(getnamecallmethod) == "function" then
+        local old
+        old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local m = getnamecallmethod()
+            if not checkcaller() and RB.enabled and not RB_blinking
+                and (m == "FireServer" or m == "InvokeServer")
+                and (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) and shopRemote(self) then
+                local h = getHRP()
+                local cf = RB_ShopCF(buyMode) or getShopCF()
+                if h and cf and (h.Position - cf.Position).Magnitude > 12 then
+                    local a = { ... }
+                    RB_blinking = true
+                    local origin, wasAnchored = h.CFrame, h.Anchored
+                    pcall(function() h.Anchored = true h.CFrame = cf end)
+                    task.wait(RB.before)
+                    pcall(function() h.Anchored = false end)
+                    local r
+                    if m == "InvokeServer" then r = old(self, table.unpack(a)) else old(self, table.unpack(a)) end
+                    task.spawn(function()
+                        task.wait(RB.after)
+                        pcall(function()
+                            local hh = getHRP()
+                            if hh then
+                                hh.Anchored = true hh.CFrame = origin
+                                task.wait()
+                                hh.Anchored = wasAnchored
+                                hh.AssemblyLinearVelocity = Vector3.zero
+                            end
+                            RB_blinking = false
+                        end)
+                    end)
+                    return r
+                end
+            end
+            return old(self, ...)
+        end))
+        log("RemoteBuy auto-blink hook installed")
+    end
+end)
+
 -- ===== UI helpers =====
 local function new(class, props, parent)
     local o = Instance.new(class)
@@ -1716,7 +1829,10 @@ local function visit()
                                     note = short .. " skipped: not responding"
                                     log(note .. " (stock stayed " .. tostring(st) .. ")")
                                 else
-                                    press(e.b)
+                                    -- REMOTE BUY: each purchase fires while blinked at the shop,
+                                    -- then you return to base. Works even with "TP to shop" OFF.
+                                    local _e = e
+                                    RB_BlinkPress(function() press(_e.b) end, buyMode)
                                     s.n += 1
                                     clicks[name] = (clicks[name] or 0) + 1
                                     bought += 1
