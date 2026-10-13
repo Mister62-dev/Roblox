@@ -1,4 +1,4 @@
--- Checkpoint TP | yoruka.id (hardened)
+-- Checkpoint TP | yoruka.id (AFK Streaming Probe)
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -37,6 +37,53 @@ local function trackConn(conn)
         table.insert(e._CPTP_CONNS, conn)
     end)
     return conn
+end
+
+-- Persistent progress.
+local lastReached = tonumber(env._CPTP_LAST_REACHED) or 0
+local lastReachedCFrame = nil
+if type(env._CPTP_LAST_CF) == "table" and #env._CPTP_LAST_CF == 3 then
+    lastReachedCFrame = CFrame.new(
+        env._CPTP_LAST_CF[1],
+        env._CPTP_LAST_CF[2],
+        env._CPTP_LAST_CF[3]
+    )
+end
+
+local lastDirection = nil
+if type(env._CPTP_LAST_DIR) == "table" and #env._CPTP_LAST_DIR == 3 then
+    lastDirection = Vector3.new(
+        env._CPTP_LAST_DIR[1],
+        env._CPTP_LAST_DIR[2],
+        env._CPTP_LAST_DIR[3]
+    )
+end
+
+local function saveProgress()
+    pcall(function()
+        local e = getEnv()
+        e._CPTP_LAST_REACHED = lastReached
+
+        if lastReachedCFrame then
+            e._CPTP_LAST_CF = {
+                lastReachedCFrame.Position.X,
+                lastReachedCFrame.Position.Y,
+                lastReachedCFrame.Position.Z
+            }
+        else
+            e._CPTP_LAST_CF = nil
+        end
+
+        if lastDirection and lastDirection.Magnitude > 0.1 then
+            e._CPTP_LAST_DIR = {
+                lastDirection.X,
+                lastDirection.Y,
+                lastDirection.Z
+            }
+        else
+            e._CPTP_LAST_DIR = nil
+        end
+    end)
 end
 
 local function getParent()
@@ -304,7 +351,9 @@ end
 
 local function getObjectCFrame(obj)
     if obj:IsA("BasePart") then
-        return obj.CFrame
+        local ok, cf = pcall(function() return obj.CFrame end)
+        if ok then return cf end
+        return nil
     end
 
     if obj:IsA("Model") then
@@ -312,17 +361,25 @@ local function getObjectCFrame(obj)
         if ok and pivot then return pivot end
 
         local part = obj:FindFirstChildWhichIsA("BasePart", true)
-        if part then return part.CFrame end
+        if part then
+            local okPart, cf = pcall(function() return part.CFrame end)
+            if okPart then return cf end
+        end
     end
 
     return nil
 end
 
--- Teleport loop
+-- Teleport / AFK state
 local enabled = false
 local runId = 0
-local lastReached = 0
+
 local GAP_RETRIES = 3
+local PROBE_MISSING_DELAY = 2
+local PROBE_DISTANCES = {50, 75, 100}
+local PROBE_SCAN_STEPS = 3
+local PROBE_SCAN_WAIT = 0.35
+local PROBE_VERTICAL_LIFT = 5
 
 local function setStatus(text)
     status.Text = "Status: " .. text
@@ -341,6 +398,10 @@ end
 local function getRoot()
     local char = lp.Character
     if not char then return nil end
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum or hum.Health <= 0 then return nil end
+
     return char:FindFirstChild("HumanoidRootPart")
 end
 
@@ -365,6 +426,161 @@ local function fullRescan()
     for _, obj in ipairs(workspace:GetDescendants()) do
         register(obj)
     end
+end
+
+local function requestStreaming()
+    pcall(function() workspace:RequestQueueForPods() end)
+    pcall(function() workspace:RequestStream() end)
+    pcall(function() lp:RequestStream() end)
+end
+
+local function setRootAnchored(root, value)
+    pcall(function() root.Anchored = value end)
+end
+
+local function setRootCFrame(root, cf)
+    local ok = pcall(function() root.CFrame = cf end)
+    return ok
+end
+
+local function getLastSafeCFrame()
+    if lastReached > 0 then
+        local obj = bestOf(lastReached)
+        if obj then
+            local cf = getObjectCFrame(obj)
+            if cf then return cf end
+        end
+    end
+
+    if lastReachedCFrame then
+        return lastReachedCFrame
+    end
+
+    local root = getRoot()
+    if root then
+        return root.CFrame
+    end
+
+    return CFrame.new(0, 0, 0)
+end
+
+local function getProbeDirection()
+    if lastDirection and lastDirection.Magnitude > 0.1 then
+        return lastDirection.Unit
+    end
+
+    local root = getRoot()
+    if root then
+        return root.CFrame.LookVector
+    end
+
+    local safe = getLastSafeCFrame()
+    return safe.LookVector
+end
+
+local function updateProgress(newNum, newCFrame)
+    if newCFrame then
+        if lastReachedCFrame then
+            local delta = newCFrame.Position - lastReachedCFrame.Position
+            if delta.Magnitude > 1 then
+                lastDirection = delta.Unit
+            else
+                lastDirection = newCFrame.LookVector
+            end
+        else
+            lastDirection = newCFrame.LookVector
+        end
+
+        lastReachedCFrame = newCFrame
+    end
+
+    lastReached = newNum
+    saveProgress()
+end
+
+local function probeForCheckpoint(targetNum)
+    local root = getRoot()
+    if not root then return nil, nil end
+
+    local returnCFrame = getLastSafeCFrame()
+    local origin = getLastSafeCFrame()
+    local dir = getProbeDirection()
+
+    local okOldAnchored, oldAnchored = pcall(function() return root.Anchored end)
+    if not okOldAnchored then oldAnchored = false end
+
+    local foundObj, foundNum = nil, nil
+
+    for _, dist in ipairs(PROBE_DISTANCES) do
+        if not enabled or getEnv()._CPTP_TOKEN ~= scriptToken then
+            break
+        end
+
+        if not dir or dir.Magnitude < 0.1 then
+            dir = Vector3.new(0, 0, -1)
+        end
+        dir = dir.Unit
+
+        local pos = origin.Position + (dir * dist) + Vector3.new(0, PROBE_VERTICAL_LIFT, 0)
+        local look = pos + (dir * 10)
+        local probeCFrame = CFrame.new(pos, look)
+
+        setRootAnchored(root, true)
+        if not setRootCFrame(root, probeCFrame) then
+            break
+        end
+
+        requestStreaming()
+        setStatus("AFK probe " .. dist .. " studs...")
+
+        for _ = 1, PROBE_SCAN_STEPS do
+            task.wait(PROBE_SCAN_WAIT)
+
+            if not enabled or getEnv()._CPTP_TOKEN ~= scriptToken then
+                break
+            end
+
+            requestStreaming()
+            fullRescan()
+
+            local obj = bestOf(targetNum)
+            if obj then
+                local cf = getObjectCFrame(obj)
+                if cf then
+                    foundObj, foundNum = obj, targetNum
+                    break
+                end
+            end
+        end
+
+        if foundObj then
+            break
+        end
+    end
+
+    if foundObj then
+        setRootAnchored(root, false)
+        return foundObj, foundNum
+    end
+
+    -- Return to last safe checkpoint position.
+    setRootAnchored(root, true)
+    setRootCFrame(root, returnCFrame + Vector3.new(0, 3, 0))
+    requestStreaming()
+    task.wait(0.5)
+    fullRescan()
+
+    local lastObj = bestOf(lastReached)
+    if lastObj then
+        local cf = getObjectCFrame(lastObj)
+        if cf then
+            lastReachedCFrame = cf
+            saveProgress()
+        end
+    end
+
+    setRootAnchored(root, oldAnchored)
+    return nil, nil
 end
 
 local function detectCurrentCheckpoint()
@@ -405,12 +621,27 @@ local function startLoop()
         fullRescan()
 
         local detected = detectCurrentCheckpoint()
-        if detected > 0 then
-            lastReached = detected
-            setStatus("resume dari Checkpoint" .. lastReached)
+        if detected > lastReached then
+            local obj = bestOf(detected)
+            local cf = obj and getObjectCFrame(obj)
+            if cf then
+                updateProgress(detected, cf)
+                setStatus("resume dari Checkpoint" .. lastReached)
+            end
+        elseif lastReached > 0 and not lastReachedCFrame then
+            local obj = bestOf(lastReached)
+            local cf = obj and getObjectCFrame(obj)
+            if cf then
+                lastReachedCFrame = cf
+                if not lastDirection or lastDirection.Magnitude < 0.1 then
+                    lastDirection = cf.LookVector
+                end
+                saveProgress()
+            end
         end
 
         local misses = 0
+        local missStart = nil
 
         -- Some games validate character movement server-side; this will trigger their anti-cheat.
         while enabled and myId == runId and getEnv()._CPTP_TOKEN == scriptToken do
@@ -433,10 +664,11 @@ local function startLoop()
                 local root = getRoot()
                 local cf = getObjectCFrame(obj)
 
-                if root and cf then
-                    root.CFrame = cf + Vector3.new(0, 3, 0)
-                    lastReached = nextNum
+                if root and cf and setRootCFrame(root, cf + Vector3.new(0, 3, 0)) then
+                    requestStreaming()
+                    updateProgress(nextNum, cf)
                     misses = 0
+                    missStart = nil
                     setStatus("TP Checkpoint" .. nextNum .. " (terakhir: " .. lastReached .. ")")
                     task.wait(0.5)
                 else
@@ -444,10 +676,51 @@ local function startLoop()
                     task.wait(0.25)
                 end
             else
-                misses = misses + 1
-                setStatus("menunggu map load... terakhir: Checkpoint" .. lastReached)
-                fullRescan()
-                task.wait(1)
+                if not missStart then
+                    missStart = os.clock()
+                end
+
+                local missingFor = os.clock() - missStart
+
+                if missingFor >= PROBE_MISSING_DELAY then
+                    setStatus("checkpoint tidak ditemukan, AFK probe maju...")
+
+                    local foundObj, foundNum = probeForCheckpoint(nextNum)
+
+                    if not enabled or myId ~= runId or getEnv()._CPTP_TOKEN ~= scriptToken then
+                        break
+                    end
+
+                    if foundObj then
+                        local root = getRoot()
+                        local cf = getObjectCFrame(foundObj)
+
+                        if root and cf and setRootCFrame(root, cf + Vector3.new(0, 3, 0)) then
+                            requestStreaming()
+                            updateProgress(foundNum or getNumber(foundObj) or nextNum, cf)
+                            misses = 0
+                            missStart = nil
+                            setStatus("AFK menemukan Checkpoint" .. lastReached)
+                            task.wait(0.5)
+                        else
+                            task.wait(0.25)
+                        end
+                    else
+                        setStatus("probe gagal, balik ke checkpoint terakhir...")
+                        task.wait(1)
+
+                        misses = misses + 1
+                        missStart = os.clock() - PROBE_MISSING_DELAY
+
+                        fullRescan()
+                        task.wait(0.1)
+                    end
+                else
+                    setStatus("menunggu map load... terakhir: Checkpoint" .. lastReached)
+                    fullRescan()
+                    requestStreaming()
+                    task.wait(0.5)
+                end
             end
         end
     end)
