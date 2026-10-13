@@ -1,4 +1,4 @@
--- Universal Aimbot + ESP | Clean UI
+-- Universal Aimbot + ESP | First / Third Person Split + Drift Fix
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,6 +10,7 @@ local lp = Players.LocalPlayer
 
 local GUI_NAME = "UniversalAimbot_GUI"
 local CONFIG_FILE = "universal_aimbot_config.json"
+local STEP_NAME = "UniversalAimbotStep"
 
 local function getEnv()
     if getgenv then
@@ -21,7 +22,7 @@ end
 
 local env = getEnv()
 
--- Clean previous execution connections and drawings.
+-- Clean previous execution connections, bindings, and drawings.
 pcall(function()
     local e = getEnv()
 
@@ -31,6 +32,10 @@ pcall(function()
         end
     end
     e._AIM_CONNS = {}
+
+    pcall(function()
+        RunService:UnBindFromRenderStep(STEP_NAME)
+    end)
 
     if e._AIM_DRAWING then
         pcall(function() e._AIM_DRAWING:Remove() end)
@@ -82,6 +87,8 @@ end
 local function defaultConfig()
     return {
         Enabled = true,
+        FirstPersonAimbot = true,
+        ThirdPersonAimbot = true,
         ShowFOV = true,
         AimKey = "RightClick",
         TargetPart = "Head",
@@ -94,9 +101,9 @@ local function defaultConfig()
         TargetNPCs = false,
         MaxDistance = 1000,
 
-        ThirdPersonMouse = true,
         ClickAim = false,
-        MouseSensitivity = 0.35,
+        MouseSensitivity = 1,
+        AimReference = "Crosshair",
 
         ESPEnabled = false,
         ESPBoxes = true,
@@ -134,6 +141,14 @@ local function sanitizeConfig()
     }
     if not validParts[Config.TargetPart] then
         Config.TargetPart = "Head"
+    end
+
+    local validRefs = {
+        Crosshair = true,
+        Mouse = true
+    }
+    if not validRefs[Config.AimReference] then
+        Config.AimReference = "Crosshair"
     end
 end
 
@@ -323,6 +338,7 @@ local uiControls = {
 local screenGui
 local main
 local configStatus
+local modeStatus
 
 local function setToggleVisual(key)
     local c = uiControls.toggles[key]
@@ -805,13 +821,26 @@ makeTab("Targeting", 3)
 makeTab("Config", 4)
 
 makeToggle(pageAim, 1, "Aimbot", "Enabled")
-makeToggle(pageAim, 2, "Show FOV", "ShowFOV")
-makeToggle(pageAim, 3, "Third Person Mouse", "ThirdPersonMouse")
-makeToggle(pageAim, 4, "Click Aim", "ClickAim")
-makeDropdown(pageAim, 5, "Aim Key", "AimKey", {"RightClick", "LeftClick", "Q", "E", "C", "X"})
-makeSlider(pageAim, 6, "FOV", "FOV", 10, 500, 5)
-makeSlider(pageAim, 7, "Smooth", "Smoothness", 0, 0.95, 0.05)
-makeSlider(pageAim, 8, "Mouse Sens", "MouseSensitivity", 0.05, 2, 0.05)
+makeToggle(pageAim, 2, "First Person Aim", "FirstPersonAimbot")
+makeToggle(pageAim, 3, "Third Person Aim", "ThirdPersonAimbot")
+makeToggle(pageAim, 4, "Show FOV", "ShowFOV")
+makeToggle(pageAim, 5, "Click Aim", "ClickAim")
+makeDropdown(pageAim, 6, "Aim Ref", "AimReference", {"Crosshair", "Mouse"})
+makeDropdown(pageAim, 7, "Aim Key", "AimKey", {"RightClick", "LeftClick", "Q", "E", "C", "X"})
+makeSlider(pageAim, 8, "FOV", "FOV", 10, 500, 5)
+makeSlider(pageAim, 9, "Smooth", "Smoothness", 0, 0.95, 0.05)
+makeSlider(pageAim, 10, "Mouse Sens", "MouseSensitivity", 0.05, 2, 0.05)
+
+modeStatus = Instance.new("TextLabel")
+modeStatus.LayoutOrder = 11
+modeStatus.Size = UDim2.new(1, 0, 0, 26)
+modeStatus.BackgroundTransparency = 1
+modeStatus.Text = "Mode: -"
+modeStatus.Font = Enum.Font.Gotham
+modeStatus.TextSize = 13
+modeStatus.TextColor3 = Theme.SubText
+modeStatus.TextXAlignment = Enum.TextXAlignment.Center
+modeStatus.Parent = pageAim
 
 makeToggle(pageESP, 1, "ESP", "ESPEnabled")
 makeToggle(pageESP, 2, "Boxes", "ESPBoxes")
@@ -1032,6 +1061,7 @@ local function isAimKeyDown()
     return ok and down
 end
 
+-- R15 and R6 rigs are both covered by the fallback chain.
 local function getCharacterPart(char)
     if not char then return nil end
 
@@ -1084,6 +1114,41 @@ local function isEnemy(plr)
     return true
 end
 
+-- Detect whether the player is currently in first person.
+local function isFirstResponder()
+    local cam = workspace.CurrentCamera
+    if not cam then return false end
+
+    if cam.CameraType == Enum.CameraType.FirstPerson then
+        return true
+    end
+
+    local okMode, mode = pcall(function()
+        return lp.CameraMode
+    end)
+    if okMode and mode == Enum.CameraMode.LockFirstPerson then
+        return true
+    end
+
+    local char = lp.Character
+    if char then
+        local head = char:FindFirstChild("Head")
+            or char:FindFirstChild("HumanoidRootPart")
+
+        if head then
+            local ok, dist = pcall(function()
+                return (cam.CFrame.Position - head.Position).Magnitude
+            end)
+
+            if ok and dist < 2 then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 local function worldToViewport(cam, pos)
     local ok, screenPos, visible = pcall(function()
         return cam:WorldToViewportPoint(pos)
@@ -1108,10 +1173,13 @@ local function isVisible(part, char)
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.RespectCanCollide = true
 
+    -- Exclude the local character AND the camera so a scoped viewmodel
+    -- parented to the camera can never block the visibility ray.
     local filter = {}
     if lp.Character then
         table.insert(filter, lp.Character)
     end
+    table.insert(filter, cam)
     params.FilterDescendantsInstances = filter
 
     local ok, result = pcall(function()
@@ -1128,18 +1196,49 @@ local function isVisible(part, char)
     return result.Instance == part
 end
 
+-- In fps games the aim point is the screen-center crosshair, not the cursor.
+local function getAimReference()
+    local cam = workspace.CurrentCamera
+
+    if Config.AimReference == "Crosshair" and cam then
+        local ok, size = pcall(function()
+            return cam.ViewportSize
+        end)
+
+        if ok and size and size.X > 0 and size.Y > 0 then
+            return Vector2.new(size.X / 2, size.Y / 2)
+        end
+    end
+
+    local okMouse, mouse = pcall(function()
+        return UserInputService:GetMouseLocation()
+    end)
+
+    if okMouse and mouse then
+        return mouse
+    end
+
+    return Vector2.new(0, 0)
+end
+
+-- Hysteresis: keep the locked head until a clearly closer one appears,
+-- so the aim stops switching targets and drifting mid-lock.
+local lastTargetPart = nil
+
 local function getClosestTarget()
     if not isLocalAlive() then
+        lastTargetPart = nil
         return nil, nil
     end
 
     local cam = workspace.CurrentCamera
-    if not cam then return nil, nil end
+    if not cam then
+        lastTargetPart = nil
+        return nil, nil
+    end
 
-    local mousePos = UserInputService:GetMouseLocation()
-    local bestPart = nil
-    local bestScreen = nil
-    local bestScreenDist = Config.FOV
+    local ref = getAimReference()
+    local candidates = {}
 
     local function consider(char)
         if not char or not char.Parent then return end
@@ -1157,14 +1256,16 @@ local function getClosestTarget()
         local screenPos, onScreen = worldToViewport(cam, part.Position)
         if not screenPos or not onScreen then return end
 
-        local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-        if screenDist > bestScreenDist then return end
+        local screenDist = (Vector2.new(screenPos.X, screenPos.Y) - ref).Magnitude
+        if screenDist > Config.FOV then return end
 
         if Config.WallCheck and not isVisible(part, char) then return end
 
-        bestPart = part
-        bestScreen = screenPos
-        bestScreenDist = screenDist
+        table.insert(candidates, {
+            Part = part,
+            Screen = screenPos,
+            Dist = screenDist
+        })
     end
 
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -1189,7 +1290,33 @@ local function getClosestTarget()
         end
     end
 
-    return bestPart, bestScreen
+    if #candidates == 0 then
+        lastTargetPart = nil
+        return nil, nil
+    end
+
+    local best = candidates[1]
+    for i = 2, #candidates do
+        if candidates[i].Dist < best.Dist then
+            best = candidates[i]
+        end
+    end
+
+    local chosen = best
+
+    if lastTargetPart and lastTargetPart.Parent then
+        for _, c in ipairs(candidates) do
+            if c.Part == lastTargetPart and c.Dist <= best.Dist * 1.3 then
+                chosen = c
+                break
+            end
+        end
+    else
+        lastTargetPart = nil
+    end
+
+    lastTargetPart = chosen.Part
+    return chosen.Part, chosen.Screen
 end
 
 local function updateFOV()
@@ -1204,7 +1331,7 @@ local function updateFOV()
     if show then
         pcall(function()
             fovCircle.Radius = Config.FOV
-            fovCircle.Position = UserInputService:GetMouseLocation()
+            fovCircle.Position = getAimReference()
         end)
     end
 end
@@ -1434,55 +1561,125 @@ local function updateESP()
     end
 end
 
--- Main aim loop
--- Online games can detect camera or mouse manipulation; use only in authorized targets.
-trackConn(RunService.RenderStepped:Connect(function()
+-- Live mode status label
+local lastModeUpdate = 0
+
+local function updateModeStatus()
+    if not modeStatus then return end
+
+    local now = os.clock()
+    if now - lastModeUpdate < 0.25 then return end
+    lastModeUpdate = now
+
+    local firstPerson = isFirstResponder()
+    local armed = (firstPerson and Config.FirstPersonAimbot)
+        or (not firstPerson and Config.ThirdPersonAimbot)
+
+    modeStatus.Text = (firstPerson and "First person" or "Third person")
+        .. (armed and " • armed" or " • off")
+end
+
+-- Third person arm: camera cframe lock, same as the version that held well.
+local function aimCamera(part)
+    local ok, partPos = pcall(function()
+        return part.Position
+    end)
+    if not ok or not partPos then return end
+
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+
+    local toPart = partPos - cam.CFrame.Position
+    if toPart.Magnitude < 0.01 then return end
+
+    -- Angle deadzone: stop micro-jitter once the head is centered.
+    local dot = toPart.Unit:Dot(cam.CFrame.LookVector)
+    if dot > 0.99995 then return end
+
+    local targetCF = CFrame.new(cam.CFrame.Position, partPos)
+
+    if Config.Smoothness <= 0.01 then
+        pcall(function()
+            cam.CFrame = targetCF
+        end)
+    else
+        local alpha = clampNumber(1 - Config.Smoothness, 0.05, 1)
+        pcall(function()
+            cam.CFrame = cam.CFrame:Lerp(targetCF, alpha)
+        end)
+    end
+end
+
+-- First person arm: exact mouse delta into the game's own aim input.
+local function aimMouse(part, screenPos)
+    if not screenPos then
+        aimCamera(part)
+        return
+    end
+
+    if type(mousemoverel) ~= "function" then
+        aimCamera(part)
+        return
+    end
+
+    local ref = getAimReference()
+    local dx = screenPos.X - ref.X
+    local dy = screenPos.Y - ref.Y
+
+    -- Sub-pixel deadzone: hold the lock instead of oscillating around it.
+    if math.abs(dx) < 0.5 and math.abs(dy) < 0.5 then
+        return
+    end
+
+    local alpha = clampNumber(1 - Config.Smoothness, 0.05, 1)
+    local mult = alpha * Config.MouseSensitivity
+
+    pcall(function()
+        mousemoverel(dx * mult, dy * mult)
+    end)
+end
+
+-- Main aim step.
+-- BindToRenderStep at Last priority runs AFTER the game camera updater,
+-- so fps games can no longer overwrite the aim cframe every frame.
+local function aimStep()
     updateFOV()
     updateESP()
+    updateModeStatus()
 
-    if Config.Enabled and isAimKeyDown() and isLocalAlive() then
-        local part, screenPos = getClosestTarget()
+    if not Config.Enabled then return end
 
-        if part then
-            local useMouse = Config.ThirdPersonMouse
-                and type(mousemoverel) == "function"
-                and screenPos ~= nil
-
-            if useMouse then
-                local mousePos = UserInputService:GetMouseLocation()
-                local dx = screenPos.X - mousePos.X
-                local dy = screenPos.Y - mousePos.Y
-
-                local alpha = clampNumber(1 - Config.Smoothness, 0.05, 1)
-                local mult = alpha * Config.MouseSensitivity
-
-                pcall(function()
-                    mousemoverel(dx * mult, dy * mult)
-                end)
-            else
-                local ok, partPos = pcall(function()
-                    return part.Position
-                end)
-
-                if ok and partPos then
-                    local cam = workspace.CurrentCamera
-
-                    if cam and (partPos - cam.CFrame.Position).Magnitude > 0.01 then
-                        local targetCF = CFrame.new(cam.CFrame.Position, partPos)
-
-                        if Config.Smoothness <= 0.01 then
-                            pcall(function()
-                                cam.CFrame = targetCF
-                            end)
-                        else
-                            local alpha = clampNumber(1 - Config.Smoothness, 0.05, 1)
-                            pcall(function()
-                                cam.CFrame = cam.CFrame:Lerp(targetCF, alpha)
-                            end)
-                        end
-                    end
-                end
-            end
-        end
+    if not isAimKeyDown() then
+        lastTargetPart = nil
+        return
     end
-end))
+
+    if not isLocalAlive() then return end
+
+    local firstPerson = isFirstResponder()
+
+    if firstPerson and not Config.FirstPersonAimbot then return end
+    if not firstPerson and not Config.ThirdPersonAimbot then return end
+
+    local part, screenPos = getClosestTarget()
+    if not part then return end
+
+    if firstPerson then
+        aimMouse(part, screenPos)
+    else
+        aimCamera(part)
+    end
+end
+
+-- Online games can detect camera or mouse manipulation; use only in authorized targets.
+local bound = pcall(function()
+    RunService:BindToRenderStep(
+        STEP_NAME,
+        Enum.RenderPriority.Last.Value,
+        aimStep
+    )
+end)
+
+if not bound then
+    trackConn(RunService.RenderStepped:Connect(aimStep))
+end
