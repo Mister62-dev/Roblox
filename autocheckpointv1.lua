@@ -5,6 +5,26 @@ local lp = Players.LocalPlayer
 
 local GUI_NAME = "CheckpointTP_GUI"
 
+-- Bersihkan koneksi dari eksekusi sebelumnya
+pcall(function()
+    local env = getgenv and getgenv() or _G
+    if env._CPTP_CONNS then
+        for _, c in ipairs(env._CPTP_CONNS) do
+            pcall(function() c:Disconnect() end)
+        end
+    end
+    env._CPTP_CONNS = {}
+end)
+
+local function trackConn(conn)
+    pcall(function()
+        local env = getgenv and getgenv() or _G
+        env._CPTP_CONNS = env._CPTP_CONNS or {}
+        table.insert(env._CPTP_CONNS, conn)
+    end)
+    return conn
+end
+
 -- Pilih parent GUI (CoreGui, fallback PlayerGui)
 local function getParent()
     local ok, core = pcall(function() return game:GetService("CoreGui") end)
@@ -108,7 +128,7 @@ title.InputBegan:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
+trackConn(UserInputService.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
         or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
@@ -117,15 +137,17 @@ UserInputService.InputChanged:Connect(function(input)
             startPos.Y.Scale, startPos.Y.Offset + delta.Y
         )
     end
-end)
+end))
 
--- ========== CHECKPOINT DETECTION (STRICT: "Checkpoint" + angka) ==========
+-- ========== CHECKPOINT REGISTRY (DYNAMIC / STREAMING) ==========
+-- registry[nomor] = { [objek] = true }
+local registry = {}
 
 local function isCharacterObject(obj)
-    local model = obj:FindFirstAncestorOfClass("Model")
     if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
         return true
     end
+    local model = obj:FindFirstAncestorOfClass("Model")
     return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
 end
 
@@ -134,7 +156,81 @@ local function hasTouch(part)
         or part:FindFirstChild("TouchInterest") ~= nil
 end
 
--- Ambil CFrame dari Part / Model
+local function getNumber(obj)
+    if not (obj:IsA("BasePart") or obj:IsA("Model")) then return nil end
+    -- Format wajib: "Checkpoint" + angka
+    local numStr = string.match(string.lower(obj.Name), "^checkpoint(%d+)$")
+    if not numStr then return nil end
+    return tonumber(numStr)
+end
+
+local function register(obj)
+    local n = getNumber(obj)
+    if not n then return end
+    if isCharacterObject(obj) then return end
+    registry[n] = registry[n] or {}
+    registry[n][obj] = true
+end
+
+local function unregister(obj)
+    local n = getNumber(obj)
+    if not n then return end
+    local set = registry[n]
+    if set then
+        set[obj] = nil
+        if next(set) == nil then
+            registry[n] = nil
+        end
+    end
+end
+
+-- Scan penuh Workspace (dipanggil saat awal & saat menunggu map load)
+local function fullRescan()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        register(obj)
+    end
+end
+
+-- Pantau objek yang streaming masuk / keluar
+trackConn(workspace.DescendantAdded:Connect(register))
+trackConn(workspace.DescendantRemoving:Connect(unregister))
+
+local function scoreOf(obj)
+    if obj:IsA("BasePart") then
+        return hasTouch(obj) and 3 or 2
+    end
+    return 1
+end
+
+-- Ambil objek terbaik untuk nomor tertentu
+local function bestOf(n)
+    local set = registry[n]
+    if not set then return nil end
+    local best, bestScore = nil, -1
+    for obj in pairs(set) do
+        if obj.Parent then
+            local s = scoreOf(obj)
+            if s > bestScore then
+                best, bestScore = obj, s
+            end
+        end
+    end
+    return best
+end
+
+-- Nomor terkecil yang lebih besar dari 'above' (untuk nomor yang bolong)
+local function smallestAbove(above)
+    local result = nil
+    for n, set in pairs(registry) do
+        if n > above and next(set) ~= nil then
+            if (not result) or n < result then
+                result = n
+            end
+        end
+    end
+    return result
+end
+
 local function getObjectCFrame(obj)
     if obj:IsA("BasePart") then
         return obj.CFrame
@@ -145,51 +241,11 @@ local function getObjectCFrame(obj)
     return nil
 end
 
--- Prioritas bila ada beberapa objek dengan nomor yang sama
-local function scoreOf(obj)
-    if obj:IsA("BasePart") then
-        return hasTouch(obj) and 3 or 2
-    end
-    return 1
-end
-
-local function scanCheckpoints()
-    local byNumber = {}
-
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("BasePart") or obj:IsA("Model") then
-            -- Format wajib: "Checkpoint" + angka (tanpa karakter lain)
-            local numStr = string.match(string.lower(obj.Name), "^checkpoint(%d+)$")
-            if numStr and not isCharacterObject(obj) then
-                local num = tonumber(numStr)
-                if num then
-                    local existing = byNumber[num]
-                    if (not existing) or scoreOf(obj) > scoreOf(existing) then
-                        byNumber[num] = obj
-                    end
-                end
-            end
-        end
-    end
-
-    -- Urut naik: 1 -> 2 -> 3 -> ... -> max
-    local numbers = {}
-    for n in pairs(byNumber) do
-        table.insert(numbers, n)
-    end
-    table.sort(numbers, function(a, b) return a < b end)
-
-    local list = {}
-    for _, n in ipairs(numbers) do
-        table.insert(list, {part = byNumber[n], num = n})
-    end
-
-    return list
-end
-
 -- ========== TELEPORT LOOP ==========
 local enabled = false
 local runId = 0
+local lastReached = 0      -- checkpoint tertinggi yang sudah dicapai (resume)
+local GAP_RETRIES = 5      -- berapa kali menunggu sebelum lompat nomor yang bolong
 
 local function setStatus(text)
     status.Text = "Status: " .. text
@@ -217,46 +273,44 @@ local function startLoop()
 
     task.spawn(function()
         setStatus("scanning Checkpoint[angka]...")
-        local list = scanCheckpoints()
+        fullRescan()
 
-        if not enabled or myId ~= runId then return end
+        local misses = 0
 
-        if #list == 0 then
-            setStatus("Checkpoint[angka] tidak ditemukan")
-            if myId == runId then
-                enabled = false
-                setToggleVisual()
-            end
-            return
-        end
+        while enabled and myId == runId do
+            -- Target logis berikutnya: checkpoint terakhir + 1
+            local nextNum = lastReached + 1
+            local obj = bestOf(nextNum)
 
-        local maxNum = list[#list].num
-        setStatus(#list .. " checkpoint ditemukan (max: " .. maxNum .. ")")
-        task.wait(0.3)
-
-        for i, entry in ipairs(list) do
-            -- cek ON sebelum setiap teleport
-            if not enabled or myId ~= runId then
-                return
-            end
-
-            local obj = entry.part
-            local root = getRoot()
-            if root and obj and obj.Parent then
-                local cf = getObjectCFrame(obj)
-                if cf then
-                    root.CFrame = cf + Vector3.new(0, 3, 0)
-                    setStatus("TP " .. i .. "/" .. #list .. " : Checkpoint" .. entry.num)
+            -- Nomor bolong? setelah beberapa kali menunggu, ambil nomor terkecil di atasnya
+            if (not obj) and misses >= GAP_RETRIES then
+                local higher = smallestAbove(lastReached)
+                if higher then
+                    nextNum = higher
+                    obj = bestOf(higher)
                 end
             end
 
-            task.wait(0.5)
-        end
+            if obj then
+                -- cek ON sebelum teleport
+                if not enabled or myId ~= runId then break end
 
-        if myId == runId then
-            enabled = false
-            setToggleVisual()
-            setStatus("selesai (Checkpoint1 -> Checkpoint" .. maxNum .. ")")
+                local root = getRoot()
+                local cf = getObjectCFrame(obj)
+                if root and cf then
+                    root.CFrame = cf + Vector3.new(0, 3, 0)
+                    lastReached = nextNum
+                    misses = 0
+                    setStatus("TP Checkpoint" .. nextNum .. " (terakhir: " .. lastReached .. ")")
+                end
+                task.wait(0.5)
+            else
+                -- Belum ada checkpoint berikutnya (map belum ter-load) -> tunggu & scan ulang
+                misses = misses + 1
+                setStatus("menunggu map load... terakhir: Checkpoint" .. lastReached)
+                fullRescan()
+                task.wait(1)
+            end
         end
     end)
 end
@@ -268,8 +322,8 @@ toggleBtn.MouseButton1Click:Connect(function()
         startLoop()
     else
         runId = runId + 1
-        setStatus("dihentikan")
+        setStatus("dihentikan (terakhir: Checkpoint" .. lastReached .. ")")
     end
 end)
-
+fullRescan()
 setToggleVisual()
