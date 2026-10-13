@@ -751,10 +751,27 @@ local function getCharacterPart(char)
     return char:FindFirstChildWhichIsA("BasePart", true)
 end
 
+-- Dead check for any humanoid character.
 local function isAlive(char)
-    if not char then return false end
+    if not char or not char.Parent then return false end
+
     local hum = char:FindFirstChildOfClass("Humanoid")
-    return hum ~= nil and hum.Health > 0
+    if not hum or hum.Health <= 0 then return false end
+
+    local ok, state = pcall(function()
+        return hum:GetState()
+    end)
+
+    if ok and state == Enum.HumanoidStateType.Dead then
+        return false
+    end
+
+    return true
+end
+
+-- Dead check for the local player.
+local function isLocalAlive()
+    return isAlive(lp.Character)
 end
 
 local function isEnemy(plr)
@@ -796,6 +813,10 @@ local function isVisible(part, char)
 end
 
 local function getClosestTarget()
+    if not isLocalAlive() then
+        return nil
+    end
+
     local cam = workspace.CurrentCamera
     if not cam then return nil end
 
@@ -804,7 +825,6 @@ local function getClosestTarget()
     local bestScreenDist = Config.FOV
 
     local function consider(char)
-        if not char or not char.Parent then return end
         if not isAlive(char) then return end
 
         local part = getCharacterPart(char)
@@ -875,7 +895,7 @@ end
 trackConn(RunService.RenderStepped:Connect(function()
     updateFOV()
 
-    if Config.Enabled and isAimKeyDown() then
+    if Config.Enabled and isAimKeyDown() and isLocalAlive() then
         local part = getClosestTarget()
 
         if part then
