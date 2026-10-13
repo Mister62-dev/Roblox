@@ -1,4 +1,4 @@
--- Universal Aimbot + ESP | First / Third Person Split + Drift Fix
+-- Universal Aimbot + ESP | First / Third Person Split + Drift Fix + Safe Aim Ref
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -89,6 +89,7 @@ local function defaultConfig()
         Enabled = true,
         FirstPersonAimbot = true,
         ThirdPersonAimbot = true,
+        ForceMode = "Auto",
         ShowFOV = true,
         AimKey = "RightClick",
         TargetPart = "Head",
@@ -149,6 +150,15 @@ local function sanitizeConfig()
     }
     if not validRefs[Config.AimReference] then
         Config.AimReference = "Crosshair"
+    end
+
+    local validModes = {
+        Auto = true,
+        First = true,
+        Third = true
+    }
+    if not validModes[Config.ForceMode] then
+        Config.ForceMode = "Auto"
     end
 end
 
@@ -825,14 +835,15 @@ makeToggle(pageAim, 2, "First Person Aim", "FirstPersonAimbot")
 makeToggle(pageAim, 3, "Third Person Aim", "ThirdPersonAimbot")
 makeToggle(pageAim, 4, "Show FOV", "ShowFOV")
 makeToggle(pageAim, 5, "Click Aim", "ClickAim")
-makeDropdown(pageAim, 6, "Aim Ref", "AimReference", {"Crosshair", "Mouse"})
-makeDropdown(pageAim, 7, "Aim Key", "AimKey", {"RightClick", "LeftClick", "Q", "E", "C", "X"})
-makeSlider(pageAim, 8, "FOV", "FOV", 10, 500, 5)
-makeSlider(pageAim, 9, "Smooth", "Smoothness", 0, 0.95, 0.05)
-makeSlider(pageAim, 10, "Mouse Sens", "MouseSensitivity", 0.05, 2, 0.05)
+makeDropdown(pageAim, 6, "Force Mode", "ForceMode", {"Auto", "First", "Third"})
+makeDropdown(pageAim, 7, "Aim Ref", "AimReference", {"Crosshair", "Mouse"})
+makeDropdown(pageAim, 8, "Aim Key", "AimKey", {"RightClick", "LeftClick", "Q", "E", "C", "X"})
+makeSlider(pageAim, 9, "FOV", "FOV", 10, 500, 5)
+makeSlider(pageAim, 10, "Smooth", "Smoothness", 0, 0.95, 0.05)
+makeSlider(pageAim, 11, "Mouse Sens", "MouseSensitivity", 0.05, 2, 0.05)
 
 modeStatus = Instance.new("TextLabel")
-modeStatus.LayoutOrder = 11
+modeStatus.LayoutOrder = 12
 modeStatus.Size = UDim2.new(1, 0, 0, 26)
 modeStatus.BackgroundTransparency = 1
 modeStatus.Text = "Mode: -"
@@ -1114,6 +1125,20 @@ local function isEnemy(plr)
     return true
 end
 
+-- A locked mouse is the strongest fps signal there is.
+local function isMouseLocked()
+    local ok, beh = pcall(function()
+        return UserInputService.MouseBehavior
+    end)
+
+    if ok and (beh == Enum.MouseBehavior.LockCenter
+        or beh == Enum.MouseBehavior.LockCurrentPosition) then
+        return true
+    end
+
+    return false
+end
+
 -- Detect whether the player is currently in first person.
 local function isFirstResponder()
     local cam = workspace.CurrentCamera
@@ -1127,6 +1152,10 @@ local function isFirstResponder()
         return lp.CameraMode
     end)
     if okMode and mode == Enum.CameraMode.LockFirstPerson then
+        return true
+    end
+
+    if isMouseLocked() then
         return true
     end
 
@@ -1147,6 +1176,19 @@ local function isFirstResponder()
     end
 
     return false
+end
+
+-- Manual override wins; auto falls back to detection.
+local function currentModeFirst()
+    if Config.ForceMode == "First" then
+        return true
+    end
+
+    if Config.ForceMode == "Third" then
+        return false
+    end
+
+    return isFirstResponder()
 end
 
 local function worldToViewport(cam, pos)
@@ -1196,11 +1238,25 @@ local function isVisible(part, char)
     return result.Instance == part
 end
 
--- In fps games the aim point is the screen-center crosshair, not the cursor.
+-- Mouse reference is only safe with a free cursor in third person.
+-- In first person or with a locked mouse it always falls back to the
+-- screen-center crosshair, so the aim delta can never go stale.
 local function getAimReference()
     local cam = workspace.CurrentCamera
 
-    if Config.AimReference == "Crosshair" and cam then
+    local useMouse = (Config.AimReference == "Mouse") and not isFirstResponder()
+
+    if useMouse then
+        local okMouse, mouse = pcall(function()
+            return UserInputService:GetMouseLocation()
+        end)
+
+        if okMouse and mouse then
+            return mouse
+        end
+    end
+
+    if cam then
         local ok, size = pcall(function()
             return cam.ViewportSize
         end)
@@ -1208,14 +1264,6 @@ local function getAimReference()
         if ok and size and size.X > 0 and size.Y > 0 then
             return Vector2.new(size.X / 2, size.Y / 2)
         end
-    end
-
-    local okMouse, mouse = pcall(function()
-        return UserInputService:GetMouseLocation()
-    end)
-
-    if okMouse and mouse then
-        return mouse
     end
 
     return Vector2.new(0, 0)
@@ -1571,7 +1619,7 @@ local function updateModeStatus()
     if now - lastModeUpdate < 0.25 then return end
     lastModeUpdate = now
 
-    local firstPerson = isFirstResponder()
+    local firstPerson = currentModeFirst()
     local armed = (firstPerson and Config.FirstPersonAimbot)
         or (not firstPerson and Config.ThirdPersonAimbot)
 
@@ -1656,7 +1704,7 @@ local function aimStep()
 
     if not isLocalAlive() then return end
 
-    local firstPerson = isFirstResponder()
+    local firstPerson = currentModeFirst()
 
     if firstPerson and not Config.FirstPersonAimbot then return end
     if not firstPerson and not Config.ThirdPersonAimbot then return end
