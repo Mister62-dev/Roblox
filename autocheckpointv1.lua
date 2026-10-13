@@ -119,76 +119,14 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ========== CHECKPOINT DETECTION (STRICT) ==========
+-- ========== CHECKPOINT DETECTION (STRICT: "Checkpoint" + angka) ==========
 
--- Nama container yang diprioritaskan
-local CONTAINERS = {
-    ["obby"] = true,
-    ["stages"] = true,
-    ["stage"] = true,
-    ["stagesfolder"] = true,
-    ["stagefolder"] = true,
-    ["checkpoints"] = true,
-    ["checkpoint"] = true,
-    ["checkpointfolder"] = true,
-    ["obbystages"] = true,
-}
-
--- Kata kunci yang di-BLOCK (di nama part ATAU nama ancestor-nya)
-local BLOCK_WORDS = {
-    "gamepass", "devproduct", "developerproduct", "product", "robux",
-    "vip", "shop", "store", "purchase", "promptpurchase", "buy",
-    "donat", "premium", "prompt", "skip", "gift", "rebirth", "decor",
-    "decoration", "ads", "billboard",
-}
-
--- Nama part yang di-BLOCK (cocok sebagian pada nama part saja)
-local BLOCK_PART_WORDS = {
-    "spawnlocation", "baseplate", "start", "lobby",
-}
-
-local function containsAny(str, words)
-    for _, w in ipairs(words) do
-        if string.find(str, w, 1, true) then
-            return true
-        end
-    end
-    return false
-end
-
--- Cek nama part + semua ancestor sampai Workspace
-local function isBlocked(part)
-    local lname = string.lower(part.Name)
-    if containsAny(lname, BLOCK_WORDS) or containsAny(lname, BLOCK_PART_WORDS) then
+local function isCharacterObject(obj)
+    local model = obj:FindFirstAncestorOfClass("Model")
+    if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
         return true
     end
-
-    local cur = part.Parent
-    while cur and cur ~= workspace do
-        if containsAny(string.lower(cur.Name), BLOCK_WORDS) then
-            return true
-        end
-        cur = cur.Parent
-    end
-
-    -- Part dengan prompt / click (toko, gamepass, dll)
-    if part:FindFirstChildWhichIsA("ProximityPrompt", true)
-        or part:FindFirstChildWhichIsA("ClickDetector", true) then
-        return true
-    end
-
-    return false
-end
-
-local function isCharacterPart(part)
-    local model = part:FindFirstAncestorOfClass("Model")
     return model ~= nil and model:FindFirstChildOfClass("Humanoid") ~= nil
-end
-
-local function firstNumber(str)
-    local n = string.match(str, "%d+")
-    if n then return tonumber(n) end
-    return nil
 end
 
 local function hasTouch(part)
@@ -196,101 +134,45 @@ local function hasTouch(part)
         or part:FindFirstChild("TouchInterest") ~= nil
 end
 
-local function hasStageWord(lname)
-    return string.find(lname, "checkpoint", 1, true) ~= nil
-        or string.find(lname, "stage", 1, true) ~= nil
-        or string.find(lname, "cp", 1, true) ~= nil
-end
-
--- Skor prioritas bila ada beberapa part dengan nomor stage yang sama
-local function scoreOf(part)
-    local s = 0
-    if hasTouch(part) then s = s + 2 end
-    local lname = string.lower(part.Name)
-    if string.find(lname, "checkpoint", 1, true) or string.find(lname, "stage", 1, true) then
-        s = s + 1
+-- Ambil CFrame dari Part / Model
+local function getObjectCFrame(obj)
+    if obj:IsA("BasePart") then
+        return obj.CFrame
+    elseif obj:IsA("Model") then
+        local ok, pivot = pcall(function() return obj:GetPivot() end)
+        if ok then return pivot end
     end
-    return s
-end
-
--- Ambil nomor stage dari part di dalam container
-local function numberInContainer(part, container)
-    -- 1) nama part mengandung angka
-    local n = firstNumber(part.Name)
-    if n then return n end
-
-    -- 2) nama model/folder di antara part dan container mengandung angka
-    if hasTouch(part) or hasStageWord(string.lower(part.Name)) then
-        local cur = part.Parent
-        while cur and cur ~= container and cur ~= workspace do
-            local pn = firstNumber(cur.Name)
-            if pn then return pn end
-            cur = cur.Parent
-        end
-    end
-
     return nil
+end
+
+-- Prioritas bila ada beberapa objek dengan nomor yang sama
+local function scoreOf(obj)
+    if obj:IsA("BasePart") then
+        return hasTouch(obj) and 3 or 2
+    end
+    return 1
 end
 
 local function scanCheckpoints()
     local byNumber = {}
-    local seen = {}
-    local source = "global"
 
-    local function consider(part, num)
-        if not num or num < 1 then return end
-        local existing = byNumber[num]
-        if (not existing) or scoreOf(part) > scoreOf(existing) then
-            byNumber[num] = part
-        end
-    end
-
-    -- ===== TAHAP 1: scan container prioritas =====
-    local containers = {}
-    for _, o in ipairs(workspace:GetDescendants()) do
-        if (o:IsA("Folder") or o:IsA("Model")) and CONTAINERS[string.lower(o.Name)] then
-            if not containsAny(string.lower(o.Name), BLOCK_WORDS) then
-                table.insert(containers, o)
-            end
-        end
-    end
-
-    local foundInContainer = false
-    for _, container in ipairs(containers) do
-        for _, obj in ipairs(container:GetDescendants()) do
-            if obj:IsA("BasePart") and not seen[obj] then
-                seen[obj] = true
-                if not isCharacterPart(obj) and not isBlocked(obj) then
-                    local num = numberInContainer(obj, container)
-                    if num then
-                        consider(obj, num)
-                        foundInContainer = true
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then
+            -- Format wajib: "Checkpoint" + angka (tanpa karakter lain)
+            local numStr = string.match(string.lower(obj.Name), "^checkpoint(%d+)$")
+            if numStr and not isCharacterObject(obj) then
+                local num = tonumber(numStr)
+                if num then
+                    local existing = byNumber[num]
+                    if (not existing) or scoreOf(obj) > scoreOf(existing) then
+                        byNumber[num] = obj
                     end
                 end
             end
         end
     end
 
-    if foundInContainer then
-        source = "container"
-    else
-        -- ===== TAHAP 2: fallback global (lebih ketat) =====
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("BasePart") and not seen[obj] then
-                seen[obj] = true
-                local lname = string.lower(obj.Name)
-                local num = firstNumber(obj.Name)
-                if num and not isCharacterPart(obj) and not isBlocked(obj) then
-                    local pureNumber = string.match(obj.Name, "^%s*%d+%s*$") ~= nil
-                    if hasStageWord(lname) or (pureNumber and hasTouch(obj)) then
-                        consider(obj, num)
-                    end
-                end
-            end
-        end
-    end
-
-    -- Susun urut naik berdasarkan nomor
+    -- Urut naik: 1 -> 2 -> 3 -> ... -> max
     local numbers = {}
     for n in pairs(byNumber) do
         table.insert(numbers, n)
@@ -302,7 +184,7 @@ local function scanCheckpoints()
         table.insert(list, {part = byNumber[n], num = n})
     end
 
-    return list, source
+    return list
 end
 
 -- ========== TELEPORT LOOP ==========
@@ -334,13 +216,13 @@ local function startLoop()
     local myId = runId
 
     task.spawn(function()
-        setStatus("scanning...")
-        local list, source = scanCheckpoints()
+        setStatus("scanning Checkpoint[angka]...")
+        local list = scanCheckpoints()
 
         if not enabled or myId ~= runId then return end
 
         if #list == 0 then
-            setStatus("checkpoint tidak ditemukan")
+            setStatus("Checkpoint[angka] tidak ditemukan")
             if myId == runId then
                 enabled = false
                 setToggleVisual()
@@ -348,7 +230,8 @@ local function startLoop()
             return
         end
 
-        setStatus(#list .. " checkpoint (" .. source .. ")")
+        local maxNum = list[#list].num
+        setStatus(#list .. " checkpoint ditemukan (max: " .. maxNum .. ")")
         task.wait(0.3)
 
         for i, entry in ipairs(list) do
@@ -357,11 +240,14 @@ local function startLoop()
                 return
             end
 
-            local part = entry.part
+            local obj = entry.part
             local root = getRoot()
-            if root and part and part.Parent then
-                root.CFrame = part.CFrame + Vector3.new(0, 3, 0)
-                setStatus("TP " .. i .. "/" .. #list .. " : #" .. entry.num .. " " .. part.Name)
+            if root and obj and obj.Parent then
+                local cf = getObjectCFrame(obj)
+                if cf then
+                    root.CFrame = cf + Vector3.new(0, 3, 0)
+                    setStatus("TP " .. i .. "/" .. #list .. " : Checkpoint" .. entry.num)
+                end
             end
 
             task.wait(0.5)
@@ -370,7 +256,7 @@ local function startLoop()
         if myId == runId then
             enabled = false
             setToggleVisual()
-            setStatus("selesai (" .. #list .. " checkpoint)")
+            setStatus("selesai (Checkpoint1 -> Checkpoint" .. maxNum .. ")")
         end
     end)
 end
