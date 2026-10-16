@@ -20,19 +20,39 @@ if not Camera then
     Camera = Workspace:FindFirstChildOfClass("Camera") or Workspace:WaitForChild("Camera")
 end
 
+local Mouse = LocalPlayer:GetMouse()
+
 local Config = {
     Aimbot = {
         Enabled = false,
+
+        -- Silent lock: locks a head without moving your camera.
+        SilentLock = true,
+
+        -- If SilentLock + SilentIgnoreFOV are enabled, it picks the closest visible target
+        -- even if your crosshair is not near it.
+        SilentIgnoreFOV = true,
+
+        KeepLockAfterRelease = true,
+        RetargetWhileHeld = true,
+        ShowLockIndicator = true,
+
+        -- Executor-dependent silent redirection hooks.
+        SilentRaycastHook = true,
+        SilentMouseHook = true,
+
         IncludePlayers = true,
         IncludeNPCs = true,
         TeamCheck = true,
         WallCheck = true,
         AliveCheck = true,
-        FOV = 160,
+
+        FOV = 170,
         Smoothness = 0.18,
         TargetPart = "Head",
         ActivationKey = Enum.UserInputType.MouseButton2
     },
+
     ESP = {
         Enabled = false,
         IncludePlayers = true,
@@ -45,6 +65,7 @@ local Config = {
         PlayerEnemyColor = Color3.fromRGB(255, 80, 80),
         NPCColor = Color3.fromRGB(255, 180, 50)
     },
+
     UI = {
         ToggleKey = Enum.KeyCode.Insert
     }
@@ -53,6 +74,7 @@ local Config = {
 local TrackedModels = {}
 local Drawings = {}
 local IsAiming = false
+local LockedTarget = nil
 
 local function GetParentGUI()
     local ok, parent = pcall(function()
@@ -74,7 +96,7 @@ end
 ------------------------------------------------------------
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "PhantomNPCSuite"
+ScreenGui.Name = "PhantomSilentSuite"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.DisplayOrder = 999
@@ -90,12 +112,12 @@ if not ScreenGui.Parent then
     ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 end
 
-local fullSize = UDim2.new(0, 270, 0, 380)
-local collapsedSize = UDim2.new(0, 270, 0, 42)
+local fullSize = UDim2.new(0, 280, 0, 420)
+local collapsedSize = UDim2.new(0, 280, 0, 42)
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Size = fullSize
-MainFrame.Position = UDim2.new(0.5, -135, 0.5, -190)
+MainFrame.Position = UDim2.new(0.5, -140, 0.5, -210)
 MainFrame.BackgroundColor3 = Color3.fromRGB(17, 17, 22)
 MainFrame.BorderSizePixel = 0
 MainFrame.ClipsDescendants = true
@@ -130,7 +152,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -92, 1, 0)
 Title.Position = UDim2.new(0, 14, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "PHANTOM // NPC SUITE"
+Title.Text = "PHANTOM // SILENT LOCK"
 Title.TextColor3 = Color3.fromRGB(250, 250, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 15
@@ -378,8 +400,17 @@ local function CreateToggle(displayName, category, key)
     end)
 end
 
-CreateSection("Combat")
-CreateToggle("Aimbot (Hold RMB)", "Aimbot", "Enabled")
+CreateSection("Silent Aim")
+CreateToggle("Aimbot Enabled", "Aimbot", "Enabled")
+CreateToggle("Silent Lock (No Camera Move)", "Aimbot", "SilentLock")
+CreateToggle("Silent Ignore FOV", "Aimbot", "SilentIgnoreFOV")
+CreateToggle("Keep Lock After Release", "Aimbot", "KeepLockAfterRelease")
+CreateToggle("Retarget While Held", "Aimbot", "RetargetWhileHeld")
+CreateToggle("Show Lock Indicator", "Aimbot", "ShowLockIndicator")
+CreateToggle("Raycast Hook", "Aimbot", "SilentRaycastHook")
+CreateToggle("Mouse Hook", "Aimbot", "SilentMouseHook")
+
+CreateSection("Target Filters")
 CreateToggle("Aim Players", "Aimbot", "IncludePlayers")
 CreateToggle("Aim NPCs / Bots", "Aimbot", "IncludeNPCs")
 CreateToggle("Aim Team Check", "Aimbot", "TeamCheck")
@@ -409,20 +440,6 @@ local function GetRootPart(model)
         or model.PrimaryPart
 end
 
-local function GetHead(model)
-    if not model then return nil end
-    return model:FindFirstChild("Head") or GetRootPart(model)
-end
-
-local function GetTargetPart(model)
-    local part = model:FindFirstChild(Config.Aimbot.TargetPart)
-    if part and part:IsA("BasePart") then
-        return part
-    end
-
-    return GetHead(model) or GetRootPart(model)
-end
-
 local function IsTrackedValid(model)
     if not model or not model.Parent then return false end
     return model:IsDescendantOf(Workspace)
@@ -437,6 +454,23 @@ local function IsAlive(model)
     end
 
     return true
+end
+
+local function GetModelHead(model)
+    if not model or not IsTrackedValid(model) then return nil end
+    if not IsAlive(model) then return nil end
+
+    local part = model:FindFirstChild(Config.Aimbot.TargetPart)
+    if part and part:IsA("BasePart") then
+        return part
+    end
+
+    part = model:FindFirstChild("Head")
+    if part and part:IsA("BasePart") then
+        return part
+    end
+
+    return GetRootPart(model)
 end
 
 local function IsVisible(model, targetPart)
@@ -502,22 +536,29 @@ local function GetClosestTarget()
     if not Camera then return nil end
 
     local closestModel = nil
-    local closestDistance = Config.Aimbot.FOV
+    local useFOV = not (Config.Aimbot.SilentLock and Config.Aimbot.SilentIgnoreFOV)
+    local closestDistance = useFOV and Config.Aimbot.FOV or math.huge
     local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 
     for model in pairs(TrackedModels) do
         if ShouldTargetModel(model) then
-            local targetPart = GetTargetPart(model)
+            local targetPart = GetModelHead(model)
 
             if targetPart then
                 local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
 
                 if onScreen and screenPos.Z > 0 then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                    local metric
 
-                    if dist <= closestDistance then
+                    if useFOV then
+                        metric = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                    else
+                        metric = (targetPart.Position - Camera.CFrame.Position).Magnitude
+                    end
+
+                    if metric <= closestDistance then
                         if IsVisible(model, targetPart) then
-                            closestDistance = dist
+                            closestDistance = metric
                             closestModel = model
                         end
                     end
@@ -527,6 +568,48 @@ local function GetClosestTarget()
     end
 
     return closestModel
+end
+
+local function IsLockedTargetValid(model)
+    if not model or not ShouldTargetModel(model) then return false end
+
+    local head = GetModelHead(model)
+    if not head then return false end
+
+    if Config.Aimbot.WallCheck and not IsVisible(model, head) then
+        return false
+    end
+
+    return true
+end
+
+local function GetLockedHead()
+    return GetModelHead(LockedTarget)
+end
+
+local function UpdateLockedTarget()
+    if not Config.Aimbot.Enabled then
+        LockedTarget = nil
+        return
+    end
+
+    if Config.Aimbot.SilentLock then
+        if IsAiming then
+            if Config.Aimbot.RetargetWhileHeld or not IsLockedTargetValid(LockedTarget) then
+                LockedTarget = GetClosestTarget()
+            end
+        else
+            if not Config.Aimbot.KeepLockAfterRelease or not IsLockedTargetValid(LockedTarget) then
+                LockedTarget = nil
+            end
+        end
+    else
+        if IsAiming then
+            LockedTarget = GetClosestTarget()
+        else
+            LockedTarget = nil
+        end
+    end
 end
 
 ------------------------------------------------------------
@@ -591,6 +674,126 @@ local function GetDisplayName(model)
     return model.Name or "NPC"
 end
 
+local LockIndicator = nil
+
+pcall(function()
+    LockIndicator = Drawing.new("Circle")
+    LockIndicator.NumSides = 24
+    LockIndicator.Thickness = 1.5
+    LockIndicator.Color = Color3.fromRGB(255, 220, 90)
+    LockIndicator.Filled = false
+    LockIndicator.Visible = false
+end)
+
+------------------------------------------------------------
+-- Silent redirection hooks
+------------------------------------------------------------
+
+local oldWorkspaceRaycast = nil
+
+local function IsLikelyWeaponRaycast(origin)
+    if not origin then return false end
+
+    if Camera and (origin - Camera.CFrame.Position).Magnitude < 25 then
+        return true
+    end
+
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if root and (origin - root.Position).Magnitude < 8 then
+        return true
+    end
+
+    return false
+end
+
+local function SilentRaycast(origin, direction, raycastParams)
+    if Config.Aimbot.Enabled
+        and Config.Aimbot.SilentLock
+        and Config.Aimbot.SilentRaycastHook
+        and IsLikelyWeaponRaycast(origin) then
+        local head = GetLockedHead()
+
+        if head then
+            local silentDirection = head.Position - origin
+
+            if silentDirection.Magnitude > 0.01 then
+                local silentParams = RaycastParams.new()
+                silentParams.FilterType = Enum.RaycastFilterType.Include
+                silentParams.FilterDescendantsInstances = { head }
+                silentParams.IgnoreWater = true
+
+                if oldWorkspaceRaycast then
+                    return oldWorkspaceRaycast(Workspace, origin, silentDirection, silentParams)
+                end
+            end
+        end
+    end
+
+    if oldWorkspaceRaycast then
+        return oldWorkspaceRaycast(Workspace, origin, direction, raycastParams)
+    end
+
+    return nil
+end
+
+pcall(function()
+    if hookfunction then
+        oldWorkspaceRaycast = hookfunction(Workspace.Raycast, function(a, b, c, d)
+            if a == Workspace then
+                return SilentRaycast(b, c, d)
+            end
+
+            return SilentRaycast(a, b, c)
+        end)
+    end
+end)
+
+pcall(function()
+    if Config.Aimbot.SilentMouseHook and getrawmetatable and setreadonly then
+        local mt = getrawmetatable(game)
+
+        if mt then
+            local oldIndex = mt.__index
+
+            setreadonly(mt, false)
+
+            mt.__index = function(self, key)
+                if checkcaller and checkcaller() then
+                    if oldIndex then
+                        return oldIndex(self, key)
+                    end
+                    return nil
+                end
+
+                if self == Mouse
+                    and Config.Aimbot.Enabled
+                    and Config.Aimbot.SilentLock
+                    and Config.Aimbot.SilentMouseHook then
+                    local head = GetLockedHead()
+
+                    if head then
+                        if key == "Hit" or key == "hit" then
+                            return head.CFrame
+                        elseif key == "Target" or key == "target" then
+                            return head
+                        elseif key == "UnitRay" or key == "unitRay" then
+                            return Ray.new(Camera.CFrame.Position, (head.Position - Camera.CFrame.Position).Unit)
+                        end
+                    end
+                end
+
+                if oldIndex then
+                    return oldIndex(self, key)
+                end
+
+                return nil
+            end
+
+            setreadonly(mt, true)
+        end
+    end
+end)
+
 ------------------------------------------------------------
 -- Main loop
 ------------------------------------------------------------
@@ -599,19 +802,46 @@ RunService.RenderStepped:Connect(function()
     Camera = Workspace.CurrentCamera or Camera
     if not Camera then return end
 
-    if Config.Aimbot.Enabled and IsAiming then
-        local target = GetClosestTarget()
+    UpdateLockedTarget()
 
-        if target then
-            local targetPart = GetTargetPart(target)
+    -- Optional visible camera aim. If SilentLock is enabled, this stays off.
+    if Config.Aimbot.Enabled and not Config.Aimbot.SilentLock and IsAiming and LockedTarget then
+        local head = GetLockedHead()
 
-            if targetPart then
-                local goalCFrame = CFrame.lookAt(Camera.CFrame.Position, targetPart.Position)
-                Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, Config.Aimbot.Smoothness)
-            end
+        if head then
+            local goalCFrame = CFrame.lookAt(Camera.CFrame.Position, head.Position)
+            Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, Config.Aimbot.Smoothness)
         end
     end
 
+    -- Lock indicator
+    if LockIndicator then
+        if Config.Aimbot.Enabled and Config.Aimbot.ShowLockIndicator then
+            local head = GetLockedHead()
+
+            if head then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+
+                if onScreen and screenPos.Z > 0 then
+                    local dist = (head.Position - Camera.CFrame.Position).Magnitude
+                    local radius = math.clamp(900 / math.max(dist, 1), 8, 30)
+
+                    LockIndicator.Visible = true
+                    LockIndicator.Position = Vector2.new(screenPos.X, screenPos.Y)
+                    LockIndicator.Radius = radius
+                    LockIndicator.Color = Color3.fromRGB(255, 220, 90)
+                else
+                    LockIndicator.Visible = false
+                end
+            else
+                LockIndicator.Visible = false
+            end
+        else
+            LockIndicator.Visible = false
+        end
+    end
+
+    -- ESP
     for model in pairs(TrackedModels) do
         if not IsTrackedValid(model) then
             TrackedModels[model] = nil
